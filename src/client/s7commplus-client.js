@@ -17,6 +17,7 @@ import { createLegacySessionKey, encodeLegacySecurityKey } from '../protocol/s7c
 import { ACTIVE_ALARM_ATTRIBUTES } from '../protocol/s7commplus/operation-policy.js';
 import { decodeCurrentAlarms } from '../protocol/s7commplus/alarms.js';
 import { PlusReceiveRouter } from '../protocol/s7commplus/subscription-notifications.js';
+import { enrollCertificate } from './s7commplus-trust-store.js';
 
 /** @import { PlusOperation, PlusObject, PlusValue } from '../protocol/s7commplus/codec.js' */
 /** @import { BlockMetadata, AreaMetadata, RuntimeMember } from '../protocol/s7commplus/type-info.js' */
@@ -109,7 +110,7 @@ function readValueBudget(member) {
 
 /** @typedef {Partial<Record<keyof typeof DEFAULT_LIMITS,number>>} PlusLimits */
 /** @template {BlockMetadata|AreaMetadata} [T=BlockMetadata|AreaMetadata] @typedef {ReturnType<typeof buildBlockMembers<T>> & {evidence:unknown[],receivedAt:string}} MemberDiscovery */
-/** @typedef {{host?:string,port?:number,productionReadOnly?:boolean,securityMode?:'discovery'|'legacy'|'tls',tls?:{ca?:string|Buffer,servername?:string,certificateSha256?:string,allowAnyCertificate?:boolean,minVersion?:'TLSv1.2'|'TLSv1.3'},limits?:PlusLimits}} PlusOptions */
+/** @typedef {{host?:string,port?:number,productionReadOnly?:boolean,securityMode?:'discovery'|'legacy'|'tls',tls?:{ca?:string|Buffer,servername?:string,certificateSha256?:string,allowAnyCertificate?:boolean,trustOnFirstUse?:boolean,allowChangedCertificate?:boolean,trustStoreDir?:string,minVersion?:'TLSv1.2'|'TLSv1.3'},limits?:PlusLimits}} PlusOptions */
 /** @typedef {{resolve:(value:any)=>void,reject:(error:Error)=>void,timer:ReturnType<typeof setTimeout>}} Pending */
 /** @typedef {{sentAtMonotonicMs:number,receivedAtMonotonicMs:number,latencyMs:number,requestBytes:number,responseBytes:number}} RequestTiming */
 /** @typedef {ReturnType<typeof responsePayload> & {version:number,expectedIntegrityId:number|undefined,timing:RequestTiming,correlation:{sequence:number,functionCode:number,integrityId:number|null,request:PlusOperation,responseBody:Buffer,fragmentCount:number}}} ExchangeResult */
@@ -187,6 +188,7 @@ export class S7CommPlusClient {
   /** @type {string|null} */
   #peerCertificateSha256 = null;
   #tlsVerified = false;
+  #tlsTofuTrusted = false;
   #tlsEstablished = false;
   /** @type {Map<number, BlockMetadata>} */
   #blocks = new Map();
@@ -227,9 +229,14 @@ export class S7CommPlusClient {
     if ('password' in options || 'username' in options || 'sessionKey' in options) throw new PlusError('AUTHENTICATION_UNSUPPORTED', 'Username/password authentication and externally supplied session keys are not supported; nothing transmitted');
     if (options.tls && options.securityMode !== 'tls') throw new PlusError('SECURITY_REQUIRED', 'TLS configuration cannot be used in plaintext');
     if (options.tls?.allowAnyCertificate !== undefined && typeof options.tls.allowAnyCertificate !== 'boolean') throw new PlusError('ARGUMENT', 'allowAnyCertificate must be a boolean');
+    if (options.tls?.trustOnFirstUse !== undefined && typeof options.tls.trustOnFirstUse !== 'boolean') throw new PlusError('ARGUMENT', 'trustOnFirstUse must be a boolean');
+    if (options.tls?.allowChangedCertificate !== undefined && typeof options.tls.allowChangedCertificate !== 'boolean') throw new PlusError('ARGUMENT', 'allowChangedCertificate must be a boolean');
+    if (options.tls?.allowChangedCertificate && !options.tls.trustOnFirstUse) throw new PlusError('ARGUMENT', 'allowChangedCertificate requires trustOnFirstUse');
+    if (options.tls?.trustStoreDir !== undefined && (typeof options.tls.trustStoreDir !== 'string' || !options.tls.trustStoreDir.trim() || !options.tls.trustOnFirstUse)) throw new PlusError('ARGUMENT', 'trustStoreDir requires trustOnFirstUse and a non-empty directory path');
+    if (options.tls?.trustOnFirstUse && (options.tls.allowAnyCertificate || options.tls.ca !== undefined || options.tls.certificateSha256 !== undefined)) throw new PlusError('ARGUMENT', 'trustOnFirstUse cannot be combined with CA/pin verification or allowAnyCertificate');
     if (options.tls?.minVersion !== undefined && !['TLSv1.2', 'TLSv1.3'].includes(options.tls.minVersion)) throw new PlusError('ARGUMENT', 'TLS minVersion must be TLSv1.2 or TLSv1.3');
-    if (options.securityMode === 'tls' && options.tls?.allowAnyCertificate !== true && !options.tls?.ca) throw new PlusError('SECURITY_REQUIRED', 'Verified TLS requires an authorized CA certificate');
-    if (options.securityMode === 'tls' && options.tls?.allowAnyCertificate !== true && !/^[a-fA-F0-9]{64}$/.test(options.tls?.certificateSha256 ?? '')) {
+    if (options.securityMode === 'tls' && !options.tls?.trustOnFirstUse && options.tls?.allowAnyCertificate !== true && !options.tls?.ca) throw new PlusError('SECURITY_REQUIRED', 'Verified TLS requires an authorized CA certificate');
+    if (options.securityMode === 'tls' && !options.tls?.trustOnFirstUse && options.tls?.allowAnyCertificate !== true && !/^[a-fA-F0-9]{64}$/.test(options.tls?.certificateSha256 ?? '')) {
       throw new PlusError('CERTIFICATE_PIN_REQUIRED', 'Verified TLS requires an independently approved SHA-256 certificate pin');
     }
     this.#limits = Object.freeze({ ...DEFAULT_LIMITS, ...options.limits });
@@ -249,10 +256,12 @@ export class S7CommPlusClient {
     return structuredClone({
       target: { host: this.#host, port: this.#port }, productionReadOnly: this.productionReadOnly, phase: this.#phase,
       connected: this.connected, protocol: 'S7CommPlus', protocolVersion: this.#version,
-      sessionEstablished: this.#established, securityMode: this.#tlsVerified ? 'TLS_VERIFIED' : this.#options.securityMode === 'tls' ? 'TLS_UNVERIFIED' : this.#legacyAuthenticated ? 'LEGACY_SESSION_KEY_INTEGRITY' : 'UNAUTHENTICATED_DISCOVERY',
+      sessionEstablished: this.#established, securityMode: this.#tlsVerified ? 'TLS_VERIFIED' : this.#tlsTofuTrusted ? 'TLS_TOFU' : this.#options.securityMode === 'tls' ? 'TLS_UNVERIFIED' : this.#legacyAuthenticated ? 'LEGACY_SESSION_KEY_INTEGRITY' : 'UNAUTHENTICATED_DISCOVERY',
       sessionRole: { requested: null, returned: this.#serverSessionRole },
       selectedProfile: this.#options.securityMode === 'tls' ? 'TLS' : 'LEGACY_PLAINTEXT',
       allowAnyCertificate: this.#options.tls?.allowAnyCertificate === true,
+      trustOnFirstUse: this.#options.tls?.trustOnFirstUse === true,
+      allowChangedCertificate: this.#options.tls?.allowChangedCertificate === true,
       peerCertificateSha256: this.#peerCertificateSha256,
       concurrency: { connectionType: 'HMI', maxConnectionsPerTarget: this.#limits.maxConnectionsPerTarget,
         activeConnectionsPerTarget: activeConnections.get(JSON.stringify([this.#host.toLowerCase(), this.#port]))?.size ?? 0,
@@ -1439,28 +1448,15 @@ export class S7CommPlusClient {
     await this.#wait(() => {
       const peerName = this.#options.tls?.servername ?? this.#host;
       const allowAnyCertificate = this.#options.tls?.allowAnyCertificate === true;
+      const trustOnFirstUse = this.#options.tls?.trustOnFirstUse === true;
       this.#tls = connectTLS({ socket: tunnel, ca: this.#options.tls?.ca,
-        servername: isIP(peerName) ? undefined : peerName, rejectUnauthorized: !allowAnyCertificate,
-        checkServerIdentity: (_hostname, certificate) => allowAnyCertificate ? undefined : checkServerIdentity(peerName, certificate),
+        servername: isIP(peerName) ? undefined : peerName, rejectUnauthorized: !allowAnyCertificate && !trustOnFirstUse,
+        checkServerIdentity: (_hostname, certificate) => allowAnyCertificate || trustOnFirstUse ? undefined : checkServerIdentity(peerName, certificate),
         minVersion: this.#options.tls?.minVersion ?? 'TLSv1.2', ecdhCurve: 'X25519',
         ciphers: 'TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256',
         secureOptions: constants.SSL_OP_NO_TICKET | 0x00080000 | 0x00000001 }, () => {
-        const certificate = this.#tls?.getPeerCertificate().raw;
-        if ((!allowAnyCertificate && !this.#tls?.authorized) || !certificate) {
-          this.#stop(new PlusError('CERTIFICATE_REJECTED', 'TLS peer certificate was not verified'));
-          return;
-        }
-        const observed = createHash('sha256').update(certificate).digest();
-        this.#peerCertificateSha256 = observed.toString('hex');
-        const expected = Buffer.from(this.#options.tls?.certificateSha256 ?? '', 'hex');
-        if (!allowAnyCertificate && (expected.length !== observed.length || !timingSafeEqual(observed, expected))) {
-          this.#stop(new PlusError('CERTIFICATE_PIN_MISMATCH', 'TLS peer does not match the independently approved certificate pin', { observedSha256: this.#peerCertificateSha256 }));
-          return;
-        }
-        this.#tlsVerified = !allowAnyCertificate;
-        this.#tlsEstablished = true;
-        this.#record(this.#observations, { kind: 'tls', protocol: this.#tls?.getProtocol(), cipher: this.#tls?.getCipher().name, certificateVerified: this.#tlsVerified });
-        this.#settle(true);
+        this.#tls?.pause();
+        void this.#acceptTLSCertificate(peerName).catch(error => this.#stop(this.#asError(error)));
       });
       this.#tls.on('error', error => {
         const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? '';
@@ -1471,6 +1467,35 @@ export class S7CommPlusClient {
         try { this.#onApplication(bytes); } catch (error) { this.#stop(this.#asError(error)); }
       });
     });
+  }
+
+  /** @param {string} peerName */
+  async #acceptTLSCertificate(peerName) {
+        const allowAnyCertificate = this.#options.tls?.allowAnyCertificate === true;
+        const trustOnFirstUse = this.#options.tls?.trustOnFirstUse === true;
+        const certificate = this.#tls?.getPeerCertificate().raw;
+        if ((!allowAnyCertificate && !trustOnFirstUse && !this.#tls?.authorized) || !certificate) {
+          this.#stop(new PlusError('CERTIFICATE_REJECTED', 'TLS peer certificate was not verified'));
+          return;
+        }
+        const observed = createHash('sha256').update(certificate).digest();
+        this.#peerCertificateSha256 = observed.toString('hex');
+        const expected = Buffer.from(this.#options.tls?.certificateSha256 ?? '', 'hex');
+        if (!allowAnyCertificate && !trustOnFirstUse && (expected.length !== observed.length || !timingSafeEqual(observed, expected))) {
+          this.#stop(new PlusError('CERTIFICATE_PIN_MISMATCH', 'TLS peer does not match the independently approved certificate pin', { observedSha256: this.#peerCertificateSha256 }));
+          return;
+        }
+        if (trustOnFirstUse) {
+          const enrollment = await enrollCertificate(certificate, this.#host, this.#port, peerName, this.#options.tls?.trustStoreDir, this.#options.tls?.allowChangedCertificate);
+          if (this.#failure || this.#tls?.destroyed) return;
+          this.#record(this.#observations, { kind: 'certificateEnrollment', ...enrollment });
+          this.#tlsTofuTrusted = true;
+        }
+        this.#tlsVerified = !allowAnyCertificate && !trustOnFirstUse;
+        this.#tlsEstablished = true;
+        this.#record(this.#observations, { kind: 'tls', protocol: this.#tls?.getProtocol(), cipher: this.#tls?.getCipher().name, certificateVerified: this.#tlsVerified });
+        this.#settle(true);
+        this.#tls?.resume();
   }
 
   /** @param {unknown} error */

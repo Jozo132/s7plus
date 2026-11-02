@@ -47,6 +47,8 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 npm install s7proxy
 ```
 
+Current release: **0.4.8**. See [Recent Updates](#recent-updates) for changes.
+
 Requires Node.js >= 20.
 
 Development and current test tooling require Node.js 22.12+; see
@@ -403,6 +405,35 @@ over the peer certificate's DER), and optionally `S7PLUS_TLS_SERVERNAME` for a
 verified certificate name. The corresponding library field is
 `tls.certificateSha256`. CA, hostname and pin must all verify before CreateObject;
 pinning is not trust-on-first-use. Consumers decide whether to save the results.
+
+For automatic self-signed certificate enrollment in the library, use:
+
+```js
+const client = new S7CommPlusClient({
+  host: process.env.PLC_HOST,
+  securityMode: 'tls',
+  tls: {
+    trustOnFirstUse: true,
+    allowChangedCertificate: true, // Optional; defaults to false.
+  },
+});
+```
+
+`trustOnFirstUse` accepts unseen certificates with a `console.warn` and stores
+them under `join(tmpdir(), 's7proxy', 'certificates')` unless `tls.trustStoreDir`
+is provided. Known certificates reconnect without a warning. A changed certificate
+is rejected by default; `tls.allowChangedCertificate: true` warns with the old and
+new SHA-256 fingerprints and replaces the stored certificate before continuing.
+This option requires `trustOnFirstUse`. Expired or not-yet-valid certificates
+remain rejected. Temporary storage can be cleared by the OS, causing a later
+connection to enroll again.
+
+Enrollment cannot be combined with CA/pin verification or `allowAnyCertificate`.
+Reports say `TLS_TOFU`, not `TLS_VERIFIED`, and record enrollment, matches, or
+replacement as `ENROLLED`, `MATCHED`, or `REPLACED`. Initial enrollment does not
+independently authenticate the PLC; allowing changes also removes protection
+against impersonation via a different certificate. Program extraction still
+requires verified TLS.
 
 To explicitly accept any PLC certificate, set `tls.allowAnyCertificate: true`
 in the library, or add `--allow-any-certificate` to the TLS exploration command:
@@ -1418,7 +1449,22 @@ test/
 
 ## Recent Updates
 
-### 0.4.6 (current source)
+### 0.4.8 (current source)
+
+- Add opt-in native Plus TLS certificate enrollment with `tls.trustOnFirstUse`, accepting unseen self-signed PLC certificates with a `console.warn` and persisting their public DER certificates atomically.
+- Default the trust store to the OS temporary directory under `s7proxy/certificates`; use `tls.trustStoreDir` for persistent or custom storage. Known certificates reconnect without another warning.
+- Reject changed certificates by default. Optional `tls.allowChangedCertificate: true` warns with both SHA-256 fingerprints, atomically replaces the stored certificate and continues communication. Expired and not-yet-valid certificates remain rejected.
+- Report enrolled connections as `TLS_TOFU`, retain observed fingerprints and record `ENROLLED`, `MATCHED` or `REPLACED` events. Strict CA/hostname/pin verification remains the default; enrollment is not independent identity verification, and accepting changes permits impersonation. Program extraction still requires verified TLS.
+- Add local TLS fixture coverage for default/custom stores, enrollment and reconnect warnings, changed-certificate rejection and replacement, and replacement-option validation.
+
+### 0.4.7
+
+- Add ClassicBlob range reads for archive-bound Standard DB members with `accessMode: 'CLASSIC_OFFSET'`. Require confirmed byte/bit offsets, supported scalar widths and ranges within the confirmed DB size; reject optimized layouts, inferred offsets and invalid or overlapping ranges. Cached bindings preserve this access mode without PLC rediscovery.
+- Return per-member `quality: 'MISMATCH'` observations for recoverable read rejections, omitted values and supported scalar datatype mismatches, including status, diagnostic text, expected datatype and actual wire type when available. Preserve successful values and keep the session usable; do not cast mismatched values to archive types.
+- Retry members individually after a rejected batch service or rejected/omitted batch items. Malformed responses, integrity/correlation failures, timeouts and transport errors remain fatal; request budgets still apply.
+- Require complete `GOOD` sample sets with native request timing in the Plus benchmark, with explicit diagnostics for mismatches or missing timing. Add fixture coverage for Standard DB offset reads, cached offset bindings, archive-qualified name reads and recoverable per-member failures.
+
+### 0.4.6
 
 - Add `bindCachedMembers(discovery)` to restore serialized DB and I/Q/M structure metadata into fresh session-owned descriptors without inventory, type queries or first-read rediscovery. Persistence and target/profile/scope isolation remain the caller's responsibility; S7Proxy does not provide database storage.
 - Validate exact DB/process-area RIDs, supported scalar software types and unique bounded LID addresses. Unreadable entries, including unresolved paths, remain unbound. Old session descriptors are still rejected.

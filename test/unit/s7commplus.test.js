@@ -1,11 +1,11 @@
 // @ts-check
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { rootCertificates } from 'node:tls';
-import { X509Certificate } from 'node:crypto';
+import { randomUUID, X509Certificate } from 'node:crypto';
 import { Cursor, decodeValue, decodeDataNotification, vlq, u32, PlusAssembler, encodeOperation, assertOutgoing, responsePayload, decodeObjects } from '../../src/protocol/s7commplus/codec.js';
 import { S7CommPlusClient } from '../../src/client/s7commplus-client.js';
 import { fixture, validateSessionRequest, encodeTestUInt64 } from '../s7commplus-fixture.js';
@@ -1447,6 +1447,99 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
     expect(() => new S7CommPlusClient({ host: '127.0.0.1', securityMode: 'legacy', tls: { allowAnyCertificate: true } })).toThrow(/plaintext/);
     expect(() => new S7CommPlusClient({ host: '127.0.0.1', securityMode: 'tls', tls: { allowAnyCertificate: /** @type {any} */ ('true') } })).toThrow(/boolean/);
     expect(() => new S7CommPlusClient({ host: '127.0.0.1', securityMode: 'tls', tls: { allowAnyCertificate: false } })).toThrow(/CA certificate/);
+  });
+  it.each(['explicit', 'default'])('automatically enrolls and warns once for a self-signed PLC certificate using the %s store', async mode => {
+    const server = await fixture({ tls: credentials });
+    const trustStoreDir = mode === 'explicit' ? join(directory, 'enrollment') : undefined;
+    const servername = `plc-without-matching-san-${randomUUID()}`;
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let certificatePath = '';
+    try {
+      for (const status of ['ENROLLED', 'MATCHED']) {
+        const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'tls',
+          tls: { trustOnFirstUse: true, trustStoreDir, servername } });
+        try {
+          await client.connect();
+          expect((await client.readSymbolic({ accessArea: 0x8A0E0001, lids: [1] })).value.value).toBe(42);
+          expect(client.report).toMatchObject({ securityMode: 'TLS_TOFU', trustOnFirstUse: true, allowAnyCertificate: false,
+            peerCertificateSha256: certificateSha256, capabilities: { blockUpload: 'UNSUPPORTED_PROFILE' } });
+          expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'certificateEnrollment', status }));
+          certificatePath = client.report.observations.find(entry => entry.kind === 'certificateEnrollment').certificatePath;
+          expect(dirname(certificatePath)).toBe(trustStoreDir ?? join(tmpdir(), 's7proxy', 'certificates'));
+          expect(warning).toHaveBeenCalledTimes(1);
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining(`127.0.0.1:${server.port}`));
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining(certificateSha256));
+        } finally { await client.disconnect(); }
+      }
+      if (trustStoreDir) expect(await readdir(trustStoreDir)).toHaveLength(1);
+      expect(await readFile(certificatePath)).toEqual(new X509Certificate(credentials.cert).raw);
+      expect(server.errors).toEqual([]);
+    } finally {
+      warning.mockRestore();
+      await server.close();
+      if (certificatePath) await rm(certificatePath, { force: true });
+    }
+  });
+  it.each([undefined, false])('rejects a changed enrolled certificate before sending a session request with allowChangedCertificate=%s', async allowChangedCertificate => {
+    const server = await fixture({ tls: credentials });
+    const trustStoreDir = join(directory, `changed-enrollment-${String(allowChangedCertificate)}`);
+    const options = { host: '127.0.0.1', port: server.port, securityMode: /** @type {const} */ ('tls'), tls: { trustOnFirstUse: true, trustStoreDir, allowChangedCertificate } };
+    const first = new S7CommPlusClient(options);
+    const next = new S7CommPlusClient(options);
+    try {
+      await first.connect();
+      await first.disconnect();
+      const [filename] = await readdir(trustStoreDir);
+      const changed = new X509Certificate(rootCertificates[0]).raw;
+      await writeFile(join(trustStoreDir, filename), changed);
+      const count = server.requests.length;
+      await expect(next.connect()).rejects.toMatchObject({ code: 'CERTIFICATE_PIN_MISMATCH' });
+      expect(server.requests).toHaveLength(count + 1);
+      expect(next.report).toMatchObject({ securityMode: 'TLS_UNVERIFIED', sessionEstablished: false, failure: { phase: 'tls' } });
+      expect(await readFile(join(trustStoreDir, filename))).toEqual(changed);
+    } finally { await first.disconnect(); await next.disconnect(); await server.close(); }
+  });
+  it('optionally accepts and warns once for a changed enrolled certificate', async () => {
+    const server = await fixture({ tls: credentials });
+    const trustStoreDir = join(directory, 'replace-enrollment');
+    const options = { host: '127.0.0.1', port: server.port, securityMode: /** @type {const} */ ('tls'),
+      tls: { trustOnFirstUse: true, trustStoreDir, allowChangedCertificate: true } };
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = new S7CommPlusClient(options);
+    try {
+      await first.connect();
+      await first.disconnect();
+      const [filename] = await readdir(trustStoreDir);
+      const previous = new X509Certificate(rootCertificates[0]);
+      await writeFile(join(trustStoreDir, filename), previous.raw);
+      warning.mockClear();
+      for (const status of ['REPLACED', 'MATCHED']) {
+        const client = new S7CommPlusClient(options);
+        try {
+          await client.connect();
+          expect((await client.readSymbolic({ accessArea: 0x8A0E0001, lids: [1] })).value.value).toBe(42);
+          expect(client.report).toMatchObject({ securityMode: 'TLS_TOFU', allowChangedCertificate: true,
+            peerCertificateSha256: certificateSha256, capabilities: { blockUpload: 'UNSUPPORTED_PROFILE' } });
+          expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'certificateEnrollment', status }));
+          expect(warning).toHaveBeenCalledTimes(1);
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining('changed PLC certificate'));
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining(`127.0.0.1:${server.port}`));
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining(previous.fingerprint256.replaceAll(':', '').toLowerCase()));
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining(certificateSha256));
+          expect(await readFile(join(trustStoreDir, filename))).toEqual(new X509Certificate(credentials.cert).raw);
+          expect(await readdir(trustStoreDir)).toEqual([filename]);
+        } finally { await client.disconnect(); }
+      }
+      expect(server.errors).toEqual([]);
+    } finally { warning.mockRestore(); await first.disconnect(); await server.close(); }
+  });
+  it('requires a boolean enrollment-only certificate replacement opt-in', () => {
+    expect(() => new S7CommPlusClient({ host: '127.0.0.1', securityMode: 'tls', tls: {
+      trustOnFirstUse: true, allowChangedCertificate: /** @type {any} */ ('true') } })).toThrow(/allowChangedCertificate must be a boolean/);
+    for (const trustOnFirstUse of [undefined, false]) {
+      expect(() => new S7CommPlusClient({ host: '127.0.0.1', securityMode: 'tls', tls: {
+        trustOnFirstUse, allowChangedCertificate: true } })).toThrow(/allowChangedCertificate requires trustOnFirstUse/);
+    }
   });
   it('supports an explicit TLS 1.3 AES-GCM profile', async () => {
     const server = await fixture({ tls: credentials });
