@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0
+## 0.5.0 (unreleased on npm)
 
 - Rename the package, CLI, configuration variables, persistence paths and metrics
   to `s7plus`; the previous names are no longer supported.

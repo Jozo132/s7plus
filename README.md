@@ -42,8 +42,10 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 
 ## Install
 
+The unscoped npm package is not yet available. Install from GitHub:
+
 ```bash
-npm install s7plus
+npm install github:Jozo132/s7plus
 ```
 
 See [the changelog](CHANGELOG.md) and [feature comparison](docs/FEATURE_COMPARISON.md).
