@@ -166,7 +166,7 @@ describe('S7-1200 legacy SessionKey known answers', () => {
     const negative = Buffer.from(body); negative[10] = 127;
     expect(() => responsePayload(negative, 0x04F2, 3, false, false, true)).toThrow(/ReturnValue/);
   });
-  it.each([0x322, 0x323, 0x443])('recognizes only bounded exact empty session confirmations after key establishment (%i)', code => {
+  it.each([0x31c, 0x322, 0x323, 0x443])('recognizes only bounded exact empty session confirmations after key establishment (%i)', code => {
     const confirmation = Buffer.from('72fe001000000000000003230000000000000000', 'hex');
     confirmation.writeUInt32BE(code, 8);
     const assembler = new PlusAssembler(); assembler.setSessionKey(Buffer.alloc(24, 35));

@@ -382,7 +382,8 @@ export class PlusAssembler {
         if (!this.#sessionKey || this.#pending.readUInt16BE(2) !== 16) throw new PlusError('SYSTEM_EVENT', 'PLC SystemEvent: stop acquisition and inspect raw response');
         if (this.#pending.length < 20) break;
         const event = this.#pending.subarray(4, 20);
-        if ((!event.equals(Buffer.from('00000000000003230000000000000000', 'hex'))
+        if ((!event.equals(Buffer.from('000000000000031c0000000000000000', 'hex'))
+          && !event.equals(Buffer.from('00000000000003230000000000000000', 'hex'))
           && !event.equals(Buffer.from('00000000000003220000000000000000', 'hex'))
           && !event.equals(Buffer.from('00000000000004430000000000000000', 'hex'))) || ++this.#confirmations > 16) {
           throw new PlusError('SYSTEM_EVENT', 'Unknown or excessive PLC SystemEvent; acquisition stopped');
