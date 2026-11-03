@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { getProductionHost } from '../protocol/production-policy.js';
 import {
   PlusError, PLUS_FUNCTION, PlusAssembler, Cursor, decodeValue, decodeObjects,
-  encodeOperation, assertOutgoing, responsePayload, planReadBatches,
+  encodeOperation, assertOutgoing, responsePayload, planReadBatches, subscriptionCreatePayload,
 } from '../protocol/s7commplus/codec.js';
 import { buildBlockMembers, validateMemberValue, memberValueSize, SOFTWARE_TYPES } from '../protocol/s7commplus/type-info.js';
 import { decodeProgramInventory, decodeProgramEventMetadata, PROGRAM_INVENTORY_ATTRIBUTES } from '../protocol/s7commplus/block-inventory.js';
@@ -17,6 +17,7 @@ import { createLegacySessionKey, encodeLegacySecurityKey } from '../protocol/s7c
 import { ACTIVE_ALARM_ATTRIBUTES } from '../protocol/s7commplus/operation-policy.js';
 import { decodeCurrentAlarms } from '../protocol/s7commplus/alarms.js';
 import { PlusReceiveRouter } from '../protocol/s7commplus/subscription-notifications.js';
+import { OwnedSubscriptionSession } from '../protocol/s7commplus/subscription-session.js';
 import { enrollCertificate } from './s7commplus-trust-store.js';
 
 /** @import { PlusOperation, PlusObject, PlusValue } from '../protocol/s7commplus/codec.js' */
@@ -24,6 +25,14 @@ import { enrollCertificate } from './s7commplus-trust-store.js';
 export { getProductionHost } from '../protocol/production-policy.js';
 /** @type {Map<string, Set<S7CommPlusClient>>} */
 const activeConnections = new Map();
+/** @param {string|undefined} address */
+function addressIdentity(address) {
+  if (!address) return null;
+  const family = isIP(address);
+  if (!family) return null;
+  try { return new URL(`http://[${family === 4 ? `::ffff:${address}` : address}]/`).hostname; }
+  catch { return null; }
+}
 const AREA_RIDS = Object.freeze({ I: 80, Q: 81, M: 82 });
 const CLASSIC_OFFSET_WIDTHS = new Map([[1, 1], [2, 1], [3, 1], [4, 2], [5, 2], [6, 4], [7, 4], [8, 4], [11, 4],
   [48, 8], [49, 8], [50, 8], [51, 8], [52, 1], [53, 2], [54, 4], [55, 1], [61, 2], [64, 8]]);
@@ -133,8 +142,18 @@ export class S7CommPlusClient {
   #cotpBytes = 0;
   #plus;
   #receiveRouter = new PlusReceiveRouter();
+  /** @type {OwnedSubscriptionSession|undefined} */
+  #subscriptions;
+  #subscriptionContainerUsed = false;
+  #subscriptionChildId = 0;
+  #subscriptionRenewBusy = false;
+  #processWriteAttempted = false;
+  #scalarWriteBusy = false;
+  /** @type {WeakMap<object,RuntimeMember[]>} */
+  #subscriptionMembers = new WeakMap();
   #sequence = 0;
   #sessionId = 0;
+  #subscriptionContainerId = 0;
   #version = 1;
   #integrityId = 0;
   #writeIntegrityId = 0;
@@ -200,7 +219,7 @@ export class S7CommPlusClient {
   #types = new Map();
   /** @type {Map<number,{maxTypes:number,maxMembers:number,discovery:MemberDiscovery}>} */
   #structures = new Map();
-  /** @type {WeakMap<RuntimeMember,{block:BlockMetadata|AreaMetadata,member:RuntimeMember,metadataEvidence:unknown}>} */
+  /** @type {WeakMap<RuntimeMember,{block:BlockMetadata|AreaMetadata,member:RuntimeMember,metadataEvidence:unknown,runtimeObserved:boolean}>} */
   #memberBindings = new WeakMap();
   /** @type {WeakMap<RuntimeMember[],{maxItems:number,members:RuntimeMember[],bindings:{block:BlockMetadata|AreaMetadata,member:RuntimeMember,metadataEvidence:unknown}[],operations:PlusOperation[]}>} */
   #readPlans = new WeakMap();
@@ -250,7 +269,7 @@ export class S7CommPlusClient {
     this.#plus = new PlusAssembler(this.#limits.maxResponseBytes);
   }
 
-  get productionReadOnly() { return !this.#modeChangeAttempted; }
+  get productionReadOnly() { return !this.#modeChangeAttempted && !this.#processWriteAttempted; }
   get connected() { return this.#ready && !this.#failure && !!this.#socket && !this.#socket.destroyed; }
   get report() {
     return structuredClone({
@@ -269,6 +288,7 @@ export class S7CommPlusClient {
         queuedRequests: this.#requestQueue.length, inFlightRequests: this.#busy ? 1 : 0 },
       identity: this.#identity, cpuState: this.#cpuState, effectiveProtectionLevel: this.#protection,
       capabilities: { objectExplore: this.#ready, areaExplore: this.#ready, communicationResourceRead: this.#ready,
+        subscriptionContainerAvailable: this.#ready && this.#subscriptionContainerId !== 0,
         currentAlarmRead: this.connected && this.#tlsEstablished, symbolicLidRead: this.#ready && this.#cpuState === 'RUN',
         namedSymbolResolution: this.#ready && this.#cpuState === 'RUN' && this.#namedMembers.length > 0,
         blockUpload: this.#tlsVerified && this.#protection === 1 ? 'BOUNDED_NATIVE_ATTRIBUTE_CONTENT' : 'UNSUPPORTED_PROFILE',
@@ -286,7 +306,7 @@ export class S7CommPlusClient {
     if (this.#phase !== 'idle') throw new PlusError('SESSION_STATE', 'Create a new client for an explicit new attempt');
     const key = JSON.stringify([this.#host.toLowerCase(), this.#port]);
     const connections = activeConnections.get(key) ?? new Set();
-    if ([...connections].some(client => client.#cpuStartBusy)) throw new PlusError('CONCURRENCY_LIMIT', 'CPU start owns this endpoint');
+    if ([...connections].some(client => client.#cpuStartBusy || client.#scalarWriteBusy)) throw new PlusError('CONCURRENCY_LIMIT', 'A control or write operation owns this endpoint');
     const limit = Math.min(this.#limits.maxConnectionsPerTarget, ...[...connections].map(client => client.#limits.maxConnectionsPerTarget));
     if (connections.size >= limit) throw new PlusError('SESSION_LIMIT', 'Concurrent connection budget for this endpoint is exhausted');
     connections.add(this);
@@ -308,6 +328,11 @@ export class S7CommPlusClient {
         if (this.#phase !== 'closed' && !this.#failure) this.#stop(new PlusError('PEER_CLOSED', `Peer closed during ${this.#phase}`));
       });
       await this.#wait(() => socket.connect(this.#port, this.#host, () => this.#settle(true)));
+      for (const clients of activeConnections.values()) for (const client of clients) {
+        if (client !== this && client.#scalarWriteBusy && addressIdentity(client.#socket?.remoteAddress) === addressIdentity(socket.remoteAddress)) {
+          throw new PlusError('CONCURRENCY_LIMIT', 'A scalar write owns this target');
+        }
+      }
       this.#phase = 'cotp';
       const tsap = Buffer.from('SIMATIC-ROOT-HMI');
       const cr = Buffer.concat([Buffer.from([6 + 4 + 2 + tsap.length + 3, 0xE0, 0, 0, 0, 1, 0, 0xC1, 2, 6, 0, 0xC2, tsap.length]), tsap, Buffer.from([0xC0, 1, 10])]);
@@ -335,7 +360,12 @@ export class S7CommPlusClient {
       if (count < 1 || count > 2) throw new PlusError('SESSION_CREATE_REJECTED', `Unexpected session object count ${count}`, created.statusDetails);
       this.#sessionId = created.cursor.uint();
       if (!this.#sessionId) throw new PlusError('SESSION_CREATE_REJECTED', 'PLC returned null session ID');
-      if (count === 2) created.cursor.uint();
+      if (count === 2) {
+        this.#subscriptionContainerId = created.cursor.uint();
+        if (this.#subscriptionContainerId === this.#sessionId) {
+          throw new PlusError('SESSION_CREATE_REJECTED', 'PLC returned an invalid subscription container ID');
+        }
+      }
       const objects = decodeObjects(created.cursor, this.#limits.maxObjects, this.#limits.maxDepth);
       const attributes = objects.flatMap(object => object.attributes);
       const versions = attributes.filter(attribute => attribute.id === 306);
@@ -920,7 +950,7 @@ export class S7CommPlusClient {
   async #listMembers(block, { maxTypes, maxMembers }) {
     const cached = this.#structures.get(block.objectRid);
     if (cached?.maxTypes === maxTypes && cached.maxMembers === maxMembers) {
-      return this.#bindDiscovery(/** @type {MemberDiscovery<T>} */ (structuredClone(cached.discovery)));
+      return this.#bindDiscovery(/** @type {MemberDiscovery<T>} */ (structuredClone(cached.discovery)), true);
     }
     /** @type {PlusObject[]} */
     const objects = [];
@@ -949,17 +979,17 @@ export class S7CommPlusClient {
     const result = buildBlockMembers(block, objects, maxMembers);
     const discovery = { ...result, evidence, receivedAt: new Date().toISOString() };
     this.#structures.set(block.objectRid, { maxTypes, maxMembers, discovery: structuredClone(discovery) });
-    return this.#bindDiscovery(discovery);
+    return this.#bindDiscovery(discovery, true);
   }
 
-  /** @template {BlockMetadata|AreaMetadata} T @param {MemberDiscovery<T>} discovery */
-  #bindDiscovery(discovery) {
+  /** @template {BlockMetadata|AreaMetadata} T @param {MemberDiscovery<T>} discovery @param {boolean} [runtimeObserved] */
+  #bindDiscovery(discovery, runtimeObserved = false) {
     const { block, members, evidence } = discovery;
     this.#namedMembers = this.#namedMembers.filter(item => this.#memberBindings.get(item.member)?.block.objectRid !== block.objectRid);
     const nativeBlock = structuredClone(block);
     const metadataEvidence = structuredClone(evidence);
     for (const member of members.filter(member => member.readable)) {
-      this.#memberBindings.set(member, { block: nativeBlock, member: structuredClone(member), metadataEvidence });
+      this.#memberBindings.set(member, { block: nativeBlock, member: structuredClone(member), metadataEvidence, runtimeObserved });
       if (block.name && member.path) {
         this.#namedMembers.push({ name: `${block.name}.${member.path}`, member }, { name: `"${block.name}".${member.path}`, member });
         if (block.type === 'DB' && Number.isInteger(block.number)) this.#namedMembers.push({ name: `DB${block.number}.${member.path}`, member });
@@ -1011,6 +1041,53 @@ export class S7CommPlusClient {
         symbolCrc: 0, metadataSymbolCrc: native.symbolCrc },
       observation: { ...decoded, quality: 'GOOD', source: 'S7COMMPLUS_RESPONSE', receivedAt: observation.receivedAt, nativeTimestamp: null },
       evidence: { metadata: structuredClone(binding.metadataEvidence), response: observation } };
+  }
+
+  /** @param {RuntimeMember} member @param {boolean|number} value @param {{confirmWrite?:boolean,confirmTarget?:string,allowUnverifiedIdentity?:boolean}} [options] */
+  async writeMember(member, value, options = {}) {
+    this.#requireReady();
+    if (!options || options.confirmWrite !== true || options.confirmTarget !== `${this.#host}:${this.#port}`
+      || Object.keys(options).some(key => !['confirmWrite', 'confirmTarget', 'allowUnverifiedIdentity'].includes(key))) {
+      throw new PlusError('WRITE_CONFIRMATION_REQUIRED', 'Write requires confirmWrite: true and the exact host:port');
+    }
+    const productionHost = getProductionHost();
+    const remoteIdentity = addressIdentity(this.#socket?.remoteAddress);
+    const productionIdentity = addressIdentity(productionHost);
+    if (productionHost && (!remoteIdentity || !productionIdentity || remoteIdentity === productionIdentity)) throw new PlusError('READ_ONLY_DENIED', 'Writes to the configured production target are forbidden');
+    if (!this.#tlsEstablished || this.#version !== 2 || (!this.#tlsVerified && options.allowUnverifiedIdentity !== true)) throw new PlusError('SECURITY_REQUIRED', 'Write requires verified TLS or explicit acceptance of unverified lab identity');
+    if (this.#protection !== 1 || this.#cpuState !== 'RUN') throw new PlusError('ACCESS_RESTRICTED', 'Write requires full access and a RUN CPU');
+    const binding = this.#memberBindings.get(member);
+    if (!binding?.runtimeObserved || !['DB', 'M'].includes(binding.block.type) || binding.member.accessMode === 'CLASSIC_OFFSET') throw new PlusError('UNVERIFIED_ADDRESS', 'Write requires a runtime-discovered DB or marker member from this session');
+    const native = binding.member;
+    const wireType = native.softdatatype === 1 ? 1 : native.softdatatype === 2 ? 10 : native.softdatatype === 52 ? 2 : 0;
+    if (!wireType || (wireType === 1 ? typeof value !== 'boolean' : typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 255)) {
+      throw new PlusError('ARGUMENT', 'Write supports BOOL or an integer BYTE/USINT value in range');
+    }
+    const competing = [...activeConnections.values()].some(clients => [...clients].some(client => client !== this
+      && (!client.#socket?.remoteAddress || addressIdentity(client.#socket.remoteAddress) === remoteIdentity)));
+    if (this.#busy || this.#requestQueue.length || this.#uploadBusy || this.#cpuStartBusy || this.#subscriptions || competing) throw new PlusError('CONCURRENCY_LIMIT', 'Write requires an exclusive idle session without subscriptions');
+    if (this.#requests >= this.#limits.maxRequests) throw new PlusError('REQUEST_LIMIT', 'Request count exhausted');
+    this.#scalarWriteBusy = true;
+    this.#processWriteAttempted = true;
+    try {
+      const response = await this.#exchange({ kind: 'writeScalar', scalar: { accessArea: binding.block.objectRid,
+        lids: [...native.accessPath], wireType, value: typeof value === 'boolean' ? Number(value) : value } });
+      const item = response.cursor.uint();
+      let itemError = null;
+      if (item) {
+        if (item !== 1) throw new PlusError('CORRELATION', 'Write response names a foreign item');
+        itemError = response.cursor.integer(64);
+        if (response.cursor.uint() !== 0) throw new PlusError('CORRELATION', 'Write response names duplicate or foreign items');
+      }
+      this.#checkScalarTail(response.cursor, response.expectedIntegrityId);
+      if (itemError !== null) throw new PlusError('ITEM_REJECTED', 'PLC rejected the scalar write', { itemError: itemError.toString() });
+      return { status: 'ACKNOWLEDGED', verified: false, member: structuredClone(native), value };
+    } catch (error) {
+      const failure = this.#asError(error);
+      if (['PLC_REJECTED', 'ITEM_REJECTED'].includes(failure.code)) throw failure;
+      this.#stop(failure);
+      throw new PlusError('UNKNOWN_WRITE_OUTCOME', 'Write may have reached the PLC; do not retry without an independent read', { cause: failure.code });
+    } finally { this.#scalarWriteBusy = false; }
   }
 
   /** @param {RuntimeMember[]} members @param {{maxItems?:number}} [options] */
@@ -1163,6 +1240,92 @@ export class S7CommPlusClient {
     }
   }
 
+  /** @param {RuntimeMember[]} members @param {{cycleMs?:number,credits?:number,queueSize?:number,signal?:AbortSignal}} [options] */
+  async createSubscription(members, options = {}) {
+    this.#requireReady();
+    if (!this.#tlsEstablished || this.#version !== 2 || this.#sessionKey || !this.#subscriptionContainerId) throw new PlusError('UNSUPPORTED_PROFILE', 'Subscriptions require an owned TLS V2 subscription container');
+    if (this.#cpuState !== 'RUN') throw new PlusError('CPU_STATE', 'Subscriptions require a genuine RUN reply');
+    if (this.#subscriptionContainerUsed) throw new PlusError('SESSION_LIMIT', 'Only one subscription is supported per session');
+    if (!options || Object.keys(options).some(key => !['cycleMs', 'credits', 'queueSize', 'signal'].includes(key))
+      || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) throw new PlusError('ARGUMENT', 'Invalid subscription options');
+    if (options.queueSize !== undefined && (!Number.isSafeInteger(options.queueSize) || options.queueSize < 1 || options.queueSize > 128)) throw new PlusError('ARGUMENT', 'Subscription queue size must be 1..128');
+    if (!Array.isArray(members) || !members.length || members.length > 64 || new Set(members).size !== members.length) throw new PlusError('ARGUMENT', 'Subscription requires 1..64 distinct members');
+    const bindings = members.map(member => {
+      const binding = this.#memberBindings.get(member);
+      if (!binding || !binding.member.readable || binding.member.accessMode === 'CLASSIC_OFFSET') throw new PlusError('UNVERIFIED_ADDRESS', 'Use readable symbolic members discovered by this session');
+      return binding;
+    });
+    const request = { containerRid: this.#subscriptionContainerId, relationId: 0x7FFFC001, changeCounter: 1,
+      creditLimit: options.credits ?? 10, cycleMs: options.cycleMs ?? 100,
+      items: bindings.map((binding, index) => ({ referenceId: index + 1, accessArea: binding.block.objectRid, lids: [...binding.member.accessPath] })) };
+    subscriptionCreatePayload(request);
+    if (options.signal?.aborted) throw new PlusError('CANCELLED', 'Subscription creation cancelled before transmission');
+    const sessionRid = this.#sessionId;
+    const containerRid = this.#subscriptionContainerId;
+    const subscriptions = new OwnedSubscriptionSession({ sessionRid, containerRid, creditTickBase: 1, requestTimeoutMs: this.#limits.requestTimeoutMs,
+      adapter: {
+        create: async () => {
+          const response = await this.#exchange({ kind: 'subscriptionCreate', subscription: request });
+          if (response.cursor.byte() !== 1) throw new PlusError('CORRELATION', 'Subscription creation must return one child RID');
+          const subscriptionRid = response.cursor.uint();
+          this.#checkScalarTail(response.cursor, response.expectedIntegrityId);
+          this.#subscriptionChildId = subscriptionRid;
+          return { sessionRid, containerRid, subscriptionRid };
+        },
+        renew: async (receipt, creditLimit) => this.#sendSubscriptionCredit(receipt.subscriptionRid, creditLimit),
+        deleteOwned: async () => {
+          const response = await this.#exchange({ kind: 'subscriptionDelete' });
+          if (response.cursor.uint32() !== containerRid) throw new PlusError('CORRELATION', 'Subscription deletion returned a foreign container RID');
+          this.#checkScalarTail(response.cursor, response.expectedIntegrityId);
+        },
+        abort: reason => this.#stop(reason ? this.#asError(reason) : new PlusError('DISCONNECTED', 'Subscription ownership became uncertain')),
+      } });
+    this.#subscriptions = subscriptions;
+    this.#subscriptionContainerUsed = true;
+    const handle = await subscriptions.create({ changeCounter: request.changeCounter, referenceIds: request.items.map(item => item.referenceId), maxBytes: Math.min(this.#limits.maxResponseBytes, 1048576) },
+      { credits: request.creditLimit, queueSize: options.queueSize, signal: options.signal });
+    this.#subscriptionMembers.set(handle, bindings.map(binding => binding.member));
+    return handle;
+  }
+
+  /** @param {object} handle */
+  popSubscription(handle) {
+    const members = this.#subscriptionMembers.get(handle);
+    if (!members || !this.#subscriptions) throw new PlusError('CORRELATION', 'Foreign subscription handle');
+    const update = this.#subscriptions.pop(handle);
+    if (!update) return null;
+    return { ...update, items: update.items.map(item => {
+      const member = members[item.referenceId - 1];
+      if (!item.value) return { ...item, member: structuredClone(member), observation: { quality: 'MISMATCH', status: 'ITEM_REJECTED' } };
+      try { return { ...item, member: structuredClone(member), observation: { ...validateMemberValue(member, item.value), quality: 'GOOD', status: 'GOOD' } }; }
+      catch (error) { const failure = this.#asError(error); return { ...item, member: structuredClone(member), observation: { quality: 'MISMATCH', status: failure.code } }; }
+    }) };
+  }
+
+  /** @param {object} handle */
+  subscriptionDiagnostics(handle) {
+    if (!this.#subscriptionMembers.has(handle) || !this.#subscriptions) throw new PlusError('CORRELATION', 'Foreign subscription handle');
+    return this.#subscriptions.diagnostics(handle);
+  }
+
+  /** @param {object} handle @param {number} credits */
+  async renewSubscription(handle, credits) {
+    this.#requireReady();
+    if (!this.#subscriptionMembers.has(handle) || !this.#subscriptions) throw new PlusError('CORRELATION', 'Foreign subscription handle');
+    if (this.#busy || this.#requestQueue.length) throw new PlusError('CONCURRENCY_LIMIT', 'Credit renewal requires an idle session');
+    this.#subscriptionRenewBusy = true;
+    try {
+      await this.#subscriptions.renew(handle, credits);
+      return { status: 'SENT', acknowledged: false };
+    } finally { this.#subscriptionRenewBusy = false; }
+  }
+
+  /** @param {object} handle */
+  async deleteSubscription(handle) {
+    if (!this.#subscriptionMembers.has(handle) || !this.#subscriptions) throw new PlusError('CORRELATION', 'Foreign subscription handle');
+    await this.#subscriptions.cancel(handle);
+  }
+
   /** @param {string} name */
   async readSymbol(name) {
     this.#requireReady();
@@ -1214,6 +1377,10 @@ export class S7CommPlusClient {
   }
 
   async disconnect() {
+    if (this.#subscriptions?.report.state === 'OPEN') {
+      try { await this.#subscriptions.close(); }
+      catch (error) { const failure = this.#asError(error); this.#teardownWarning ??= { code: failure.code, message: failure.message, phase: this.#phase, details: failure.details }; }
+    }
     this.#disconnectRequested = true;
     this.#receiveRouter.close();
     clearTimeout(this.#durationTimer);
@@ -1247,6 +1414,8 @@ export class S7CommPlusClient {
     if (this.#failure) throw this.#failure;
     if (!this.connected) throw new PlusError('SESSION_REQUIRED', 'No usable S7CommPlus session');
     if (this.#cpuStartBusy && !allowCpuStart) throw new PlusError('CONCURRENCY_LIMIT', 'CPU start is in progress');
+    if (this.#scalarWriteBusy) throw new PlusError('CONCURRENCY_LIMIT', 'Scalar write is in progress');
+    if (this.#subscriptionRenewBusy) throw new PlusError('CONCURRENCY_LIMIT', 'Subscription renewal is in progress');
   }
 
   /** @param {any[]} entries @param {any} entry */
@@ -1299,13 +1468,40 @@ export class S7CommPlusClient {
   /** @param {PlusOperation} operation @returns {Promise<ExchangeResult>} */
   async #runExchange(operation) {
     try { return await this.#exchangeNow(operation); }
-    finally {
-      queueMicrotask(() => {
-        if (this.#busy || this.#failure || this.#phase === 'closed') return;
-        const request = this.#requestQueue.shift();
-        if (request) this.#runExchange(request.operation).then(request.resolve, request.reject);
-      });
-    }
+    finally { this.#drainQueue(); }
+  }
+
+  #drainQueue() {
+    queueMicrotask(() => {
+      if (this.#busy || this.#failure || this.#phase === 'closed') return;
+      const request = this.#requestQueue.shift();
+      if (request) this.#runExchange(request.operation).then(request.resolve, request.reject);
+    });
+  }
+
+  /** @param {number} subscriptionRid @param {number} creditLimit */
+  async #sendSubscriptionCredit(subscriptionRid, creditLimit) {
+    if (this.#busy || this.#requestQueue.length || !this.#tls || !this.#subscriptions || subscriptionRid !== this.#subscriptionChildId) throw new PlusError('CONCURRENCY_LIMIT', 'Owned credit renewal requires an idle TLS session');
+    if (this.#requests >= this.#limits.maxRequests) throw new PlusError('REQUEST_LIMIT', 'Request count exhausted');
+    this.#busy = true;
+    try {
+      const wait = this.#limits.pacingMs - (performance.now() - this.#lastRequest);
+      if (wait > 0) await delay(wait, undefined, { signal: this.#pacingAbort.signal });
+      if (this.#failure || !this.#tls || !this.#ready) throw this.#failure ?? new PlusError('DISCONNECTED', 'Subscription session disconnected');
+      const sequence = this.#sequence;
+      const operation = { kind: 'subscriptionCredit', creditLimit };
+      const context = { sessionId: this.#sessionId, version: this.#version, integrityId: this.#writeIntegrityId,
+        subscriptionAuthorized: true, subscriptionChildId: this.#subscriptionChildId };
+      const frame = encodeOperation(operation, context, sequence);
+      if (frame.length > this.#limits.maxRequestBytes) throw new PlusError('REQUEST_LIMIT', 'Configured request-byte budget exceeded');
+      assertOutgoing(frame, operation, context, sequence);
+      this.#sequence = (sequence + 1) & 0xFFFF;
+      this.#writeIntegrityId++;
+      this.#requests++;
+      this.#lastRequest = performance.now();
+      this.#record(this.#transcript, { direction: 'out', kind: operation.kind, sequence, hex: frame.toString('hex').slice(0, 2048) });
+      await new Promise((resolve, reject) => this.#tls?.write(frame, error => error ? reject(error) : resolve(undefined)));
+    } finally { this.#busy = false; this.#drainQueue(); }
   }
 
   /** @param {Error} error */
@@ -1324,8 +1520,11 @@ export class S7CommPlusClient {
     const context = { sessionId: this.#sessionId, version: this.#version, serverVersion: this.#serverVersion,
       securityKey: operation.kind === 'setupSession' ? this.#securityKey : undefined, sessionKey: this.#sessionKey,
       cpuStartAuthorized: operation.kind === 'cpuStart' && this.#cpuStartBusy,
+      scalarWriteAuthorized: operation.kind === 'writeScalar' && this.#scalarWriteBusy,
+      subscriptionAuthorized: !!this.#subscriptions && this.#tlsEstablished && ['subscriptionCreate', 'subscriptionDelete'].includes(operation.kind),
+      subscriptionContainerId: this.#subscriptionContainerId,
       integrityId: this.#sessionKey ? operation.kind === 'activateSession' ? this.#writeIntegrityId++ : this.#integrityId++
-        : this.#ready && this.#tls ? operation.kind === 'cpuStart' ? this.#writeIntegrityId++ : this.#integrityId++ : undefined };
+        : this.#ready && this.#tls ? ['cpuStart', 'subscriptionCreate', 'subscriptionDelete', 'writeScalar'].includes(operation.kind) ? this.#writeIntegrityId++ : this.#integrityId++ : undefined };
     try {
       const frame = encodeOperation(operation, context, sequence);
       if (frame.length > this.#limits.maxRequestBytes) throw new PlusError('REQUEST_LIMIT', 'Configured request-byte budget exceeded');
@@ -1462,7 +1661,8 @@ export class S7CommPlusClient {
     const confirmations = this.#plus.sessionConfirmations;
     const messages = this.#plus.feed(bytes).map(message => ({ ...message, receivedAtMonotonicMs: performance.now() }));
     if (this.#plus.sessionConfirmations !== confirmations) this.#record(this.#observations, { kind: 'sessionConfirmation', count: this.#plus.sessionConfirmations });
-    const reply = this.#receiveRouter.route(messages, !!this.#pending);
+    for (const message of messages) if (this.#tlsEstablished && message.body[0] === 0x33) this.#record(this.#transcript, { direction: 'in', layer: 'S7CommPlus', version: message.version, hex: message.body.toString('hex').slice(0, 2048) });
+    const reply = this.#subscriptions ? this.#subscriptions.route(messages, !!this.#pending) : this.#receiveRouter.route(messages, !!this.#pending);
     if (reply) {
       if (this.#tlsEstablished) this.#record(this.#transcript, { direction: 'in', layer: 'S7CommPlus', version: reply.version, hex: reply.body.toString('hex').slice(0, 2048) });
       this.#settle(reply);
@@ -1545,6 +1745,7 @@ export class S7CommPlusClient {
     }
     this.#ready = false;
     clearTimeout(this.#durationTimer);
+    this.#subscriptions?.abort();
     this.#receiveRouter.close();
     this.#pacingAbort.abort();
     this.#settle(undefined, this.#failure ?? error);

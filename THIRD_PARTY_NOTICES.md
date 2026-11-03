@@ -48,6 +48,12 @@ use independently constructed synthetic objects, not engineering archives or
 controller captures. No Python runtime is required.
 No source from the separately licensed thomas-v2/S7CommPlusDriver was incorporated.
 
+For offline data-subscription encoding and receive ordering, the Python reference
+at commit `10ddc3798fb0bdd01671e363773a3d4e91171c41` informed the request
+layout, bounded notification handling and its published CreateObject test vector.
+That reference describes the vector as a working C# driver trace. These tests
+do not establish live subscription support in this project.
+
 The same pinned MIT reference's `v1_session_key` modules and `_fragment_hmac.py`
 informed the JavaScript legacy SessionKey and authenticated-fragment compatibility
 implementation. The complete S7-1200 blob/key known-answer vector and independent

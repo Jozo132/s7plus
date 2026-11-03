@@ -11,6 +11,7 @@ export const PLUS_FUNCTION = Object.freeze({
   explore: 0x04BB, readBlockContent: 0x04BB, readActiveAlarms: 0x04BB, createSession: 0x04CA, setupSession: 0x0542,
   read: 0x054C, readAttribute: 0x0586, initSSL: 0x05B3, activateSession: 0x04F2,
   cpuStart: 0x04F2,
+  subscriptionCreate: 0x04CA, subscriptionDelete: 0x04D4, subscriptionCredit: 0x04F2, writeScalar: 0x0542,
 });
 
 /** @param {number} value */
@@ -172,8 +173,54 @@ export function createSessionPayload() {
   ]);
 }
 
-/** @typedef {{kind:string, objectId?:number, attributes?:number[], recursive?:boolean, accessArea?:number, lids?:number[], symbolCrc?:number, attribute?:number, maxItems?:number, items?:{accessArea:number,lids:number[],symbolCrc?:number,accessSubArea?:number}[]}} PlusOperation */
-/** @typedef {{sessionId:number, version:number, serverVersion?:Buffer, integrityId?:number, securityKey?:Buffer, sessionKey?:Buffer, sequence?:number, cpuStartAuthorized?:boolean}} PlusContext */
+/** @param {{containerRid:number,relationId:number,changeCounter:number,creditLimit:number,cycleMs:number,items:{referenceId:number,accessArea:number,lids:number[]}[]}} request */
+export function subscriptionCreatePayload(request) {
+  const { containerRid, relationId, changeCounter, creditLimit, cycleMs, items } = request;
+  if (!Number.isInteger(containerRid) || containerRid < 1 || containerRid > 0xFFFFFFFF
+    || !Number.isInteger(relationId) || relationId < 1 || relationId > 0xFFFFFFFF
+    || !Number.isInteger(changeCounter) || changeCounter < 1 || changeCounter > 255
+    || !Number.isInteger(creditLimit) || creditLimit < 1 || creditLimit > 254
+    || !Number.isInteger(cycleMs) || cycleMs < 10 || cycleMs > 60000
+    || !Array.isArray(items) || items.length < 1 || items.length > 64) {
+    throw new PlusError('ARGUMENT', 'Invalid bounded subscription request');
+  }
+  const references = new Set();
+  const values = [0x80000000 + changeCounter * 0x10000, 0, items.length];
+  for (const item of items) {
+    if (!item || !Number.isInteger(item.referenceId) || item.referenceId < 1 || item.referenceId > 0xFFFFFFFF
+      || references.has(item.referenceId) || !Number.isInteger(item.accessArea)
+      || !([80, 81, 82].includes(item.accessArea) || (item.accessArea >>> 16 === 0x8A0E && (item.accessArea & 0xFFFF) > 0))
+      || !Array.isArray(item.lids) || item.lids.length < 1 || item.lids.length > 16
+      || item.lids.some(lid => !Number.isInteger(lid) || lid < 0 || lid > 0xFFFFFFFF)) {
+      throw new PlusError('ARGUMENT', 'Invalid subscription symbolic address or reference');
+    }
+    references.add(item.referenceId);
+    values.push(0x80040000 + 1 + item.lids.length, item.referenceId, 0, item.accessArea, 0,
+      item.accessArea >= 0x8A0E0000 ? 2550 : 3736, ...item.lids);
+  }
+  /** @param {number} id @param {Buffer} value */
+  const attribute = (id, value) => Buffer.concat([Buffer.from([0xA3]), vlq(id), value]);
+  /** @param {number} type @param {Buffer} value */
+  const scalar = (type, value) => Buffer.concat([Buffer.from([0, type]), value]);
+  const credit = Buffer.alloc(2);
+  credit.writeInt16BE(creditLimit);
+  const name = `Subscription_${relationId}`;
+  const payload = Buffer.concat([
+    u32(containerRid), Buffer.from([0, 4, 0]), u32(0), Buffer.from([0xA1]), u32(relationId), vlq(1001), Buffer.from([0, 0]),
+    stringAttribute(233, name), attribute(1082, scalar(2, Buffer.from([0]))), attribute(1002, scalar(3, Buffer.alloc(2))),
+    attribute(1003, scalar(9, Buffer.from([0]))), attribute(1040, scalar(2, Buffer.from([20]))),
+    attribute(1041, scalar(1, Buffer.from([1]))), attribute(1048, Buffer.concat([Buffer.from([0x20, 4]), vlq(values.length), ...values.map(vlq)])),
+    attribute(1049, scalar(4, vlq(cycleMs))), attribute(1051, scalar(2, Buffer.from([0]))),
+    attribute(1052, scalar(2, Buffer.from([0]))), attribute(1053, scalar(7, credit)),
+    attribute(1054, scalar(3, Buffer.from([0xFF, 0xFF]))), attribute(1055, scalar(2, Buffer.from([0]))),
+    Buffer.from([0xA2]), u32(0),
+  ]);
+  if (payload.length + 60 > 900) throw new PlusError('REQUEST_LIMIT', 'Subscription request exceeds the bounded frame budget');
+  return payload;
+}
+
+/** @typedef {{kind:string, objectId?:number, attributes?:number[], recursive?:boolean, accessArea?:number, lids?:number[], symbolCrc?:number, attribute?:number, maxItems?:number, items?:{accessArea:number,lids:number[],symbolCrc?:number,accessSubArea?:number}[],subscription?:Parameters<typeof subscriptionCreatePayload>[0],scalar?:{accessArea:number,lids:number[],wireType:number,value:number},creditLimit?:number}} PlusOperation */
+/** @typedef {{sessionId:number, version:number, serverVersion?:Buffer, integrityId?:number, securityKey?:Buffer, sessionKey?:Buffer, sequence?:number, cpuStartAuthorized?:boolean,subscriptionAuthorized?:boolean,subscriptionContainerId?:number,subscriptionChildId?:number,scalarWriteAuthorized?:boolean}} PlusContext */
 
 /** @param {{accessArea:number,lids:number[],symbolCrc?:number,accessSubArea?:number}} item */
 function encodeReadAddress(item) {
@@ -230,6 +277,46 @@ function operationPayload(operation, context) {
   switch (operation.kind) {
     case 'initSSL': return u32(0);
     case 'createSession': return createSessionPayload();
+    case 'subscriptionCreate': {
+      if (!sessionId || version !== 2 || context.sessionKey || context.integrityId === undefined || !context.subscriptionContainerId
+        || !operation.subscription || operation.subscription.containerRid !== context.subscriptionContainerId
+        || Object.keys(operation).some(key => !['kind', 'subscription'].includes(key))) {
+        throw new PlusError('READ_ONLY_DENIED', 'Subscription creation requires the owned TLS session container');
+      }
+      return subscriptionCreatePayload(operation.subscription);
+    }
+    case 'subscriptionDelete': {
+      if (!sessionId || version !== 2 || context.sessionKey || context.integrityId === undefined || !context.subscriptionContainerId
+        || Object.keys(operation).some(key => key !== 'kind')) {
+        throw new PlusError('READ_ONLY_DENIED', 'Subscription deletion requires the owned TLS session container');
+      }
+      return Buffer.concat([u32(context.subscriptionContainerId), Buffer.from([0]), qualifier(2), u32(0)]);
+    }
+    case 'subscriptionCredit': {
+      if (!sessionId || version !== 2 || context.sessionKey || context.integrityId === undefined || !context.subscriptionChildId
+        || Object.keys(operation).some(key => !['kind', 'creditLimit'].includes(key))
+        || !Number.isInteger(operation.creditLimit) || /** @type {number} */ (operation.creditLimit) < 1 || /** @type {number} */ (operation.creditLimit) > 254) {
+        throw new PlusError('READ_ONLY_DENIED', 'Credit renewal requires the owned TLS subscription child and finite credits');
+      }
+      const credit = Buffer.alloc(2);
+      credit.writeInt16BE(/** @type {number} */ (operation.creditLimit));
+      return Buffer.concat([u32(context.subscriptionChildId), vlq(1), vlq(1053), Buffer.from([0, 7]), credit, qualifier(2), Buffer.from([0]), u32(0)]);
+    }
+    case 'writeScalar': {
+      const scalar = operation.scalar;
+      if (!sessionId || version !== 2 || context.sessionKey || context.integrityId === undefined || !scalar
+        || Object.keys(operation).some(key => !['kind', 'scalar'].includes(key))
+        || Object.keys(scalar).some(key => !['accessArea', 'lids', 'wireType', 'value'].includes(key))
+        || !(scalar.accessArea === 82 || (scalar.accessArea >>> 16 === 0x8A0E && (scalar.accessArea & 0xFFFF) > 0))
+        || !Array.isArray(scalar.lids) || !scalar.lids.length || scalar.lids.length > 16
+        || scalar.lids.some(lid => !Number.isInteger(lid) || lid < 0 || lid > 0xFFFFFFFF)
+        || ![1, 2, 10].includes(scalar.wireType) || !Number.isInteger(scalar.value)
+        || scalar.value < 0 || scalar.value > (scalar.wireType === 1 ? 1 : 255)) {
+        throw new PlusError('READ_ONLY_DENIED', 'Scalar write requires a bounded DB or marker BOOL/BYTE/USINT address');
+      }
+      return Buffer.concat([u32(0), vlq(1), vlq(4 + scalar.lids.length), encodeReadAddress(scalar),
+        vlq(1), Buffer.from([0, scalar.wireType, scalar.value, 0]), qualifier(2), u32(0)]);
+    }
     case 'setupSession': {
       if (!sessionId || !context.serverVersion) throw new PlusError('SESSION_REQUIRED', 'No owned session/version');
       const cursor = new Cursor(context.serverVersion);
@@ -319,16 +406,19 @@ export function encodeOperation(operation, context, sequence) {
   if (['read', 'explore', 'readBlockContent', 'readActiveAlarms', 'readAttribute'].includes(operation.kind) && !context.sessionId) {
     throw new PlusError('SESSION_REQUIRED', 'Read requires an established session');
   }
-  if (context.integrityId !== undefined && ['read', 'explore', 'readBlockContent', 'readActiveAlarms', 'readAttribute', 'activateSession', 'cpuStart'].includes(operation.kind)) {
+  if (context.integrityId !== undefined && ['read', 'explore', 'readBlockContent', 'readActiveAlarms', 'readAttribute', 'activateSession', 'cpuStart', 'subscriptionDelete', 'subscriptionCredit', 'writeScalar'].includes(operation.kind)) {
     const tail = ['explore', 'readBlockContent', 'readActiveAlarms'].includes(operation.kind) ? 5 : context.sessionKey && operation.kind === 'activateSession' ? 3 : 4;
     payload = Buffer.concat([payload.subarray(0, -tail), vlq(context.integrityId), payload.subarray(-tail)]);
+  }
+  if (operation.kind === 'subscriptionCreate' && context.integrityId !== undefined) {
+    payload = Buffer.concat([payload.subarray(0, 11), vlq(context.integrityId), payload.subarray(11)]);
   }
   const header = Buffer.alloc(14);
   header[0] = 0x31;
   header.writeUInt16BE(functionCode, 3);
   header.writeUInt16BE(sequence, 7);
   header.writeUInt32BE(operation.kind === 'createSession' ? 288 : context.sessionId, 9);
-  header[13] = operation.kind === 'initSSL' ? 0x30 : operation.kind === 'createSession' ? 0x36 : 0x34;
+  header[13] = operation.kind === 'initSSL' ? 0x30 : operation.kind === 'createSession' ? 0x36 : operation.kind === 'subscriptionCredit' ? 0x74 : 0x34;
   const version = ['initSSL', 'createSession'].includes(operation.kind) ? 1 : operation.kind === 'setupSession' ? 2 : context.version;
   if (version !== 1 && version !== 2) throw new PlusError('UNSUPPORTED_VERSION', `V${version} requires an unimplemented security profile`);
   const application = Buffer.concat([header, payload]);
@@ -512,7 +602,7 @@ export function decodeDataNotification(message, owner) {
     items.push({ referenceId, status, value: failed ? null : decodeValue(cursor), errorCode: failed ? status : null });
   }
   const trailing = cursor.take(cursor.bytes.length - cursor.offset);
-  if (trailing.length) throw new PlusError('UNSUPPORTED_DECODING', 'Trailing notification data or alarm extensions are not qualified');
+  if (trailing.length && !trailing.equals(Buffer.alloc(4))) throw new PlusError('UNSUPPORTED_DECODING', 'Trailing notification data or alarm extensions are not qualified');
   return { subscriptionRid, creditTick, sequenceNumber, changeCounter, timestampMicroseconds, items,
     timestampSemantics: 'REFERENCE_MICROSECONDS_NOT_QUALIFIED_SCAN_TIME',
     completeness: 'DELTA_ITEMS_NOT_FULL_SNAPSHOT', rawBody: Buffer.from(message.body) };

@@ -6,8 +6,8 @@ import { DataNotificationBuffer, PlusReceiveRouter } from './subscription-notifi
 /** @import { DataNotificationOwner } from './codec.js' */
 /** @import { PlusIncomingMessage } from './subscription-notifications.js' */
 /** @typedef {{sessionRid:number,containerRid:number,subscriptionRid:number}} OwnedSubscriptionReceipt */
-/** @typedef {{create:(request:{sessionRid:number,containerRid:number,referenceIds:number[],changeCounter:number,creditLimit:number},signal:AbortSignal)=>Promise<OwnedSubscriptionReceipt>,renew:(receipt:OwnedSubscriptionReceipt,creditLimit:number,signal:AbortSignal)=>Promise<void>,deleteOwned:(receipt:OwnedSubscriptionReceipt,signal:AbortSignal)=>Promise<void>,abort:()=>void}} SubscriptionLifecycleAdapter */
-/** @typedef {{owner:DataNotificationOwner,receipt:OwnedSubscriptionReceipt,buffer:DataNotificationBuffer,state:'ACTIVE'|'DELETING'|'CLOSED',busy:boolean,creditLimit:number,lastCreditTick:number|null,createdAt:number,lastReceivedAt:number|null,discardedWhileClosing:number,cancelPromise?:Promise<void>}} OwnedEntry */
+/** @typedef {{create:(request:{sessionRid:number,containerRid:number,referenceIds:number[],changeCounter:number,creditLimit:number},signal:AbortSignal)=>Promise<OwnedSubscriptionReceipt>,renew:(receipt:OwnedSubscriptionReceipt,creditLimit:number,signal:AbortSignal)=>Promise<void>,deleteOwned:(receipt:OwnedSubscriptionReceipt,signal:AbortSignal)=>Promise<void>,abort:(reason?:unknown)=>void}} SubscriptionLifecycleAdapter */
+/** @typedef {{owner:DataNotificationOwner,receipt:OwnedSubscriptionReceipt,buffer:DataNotificationBuffer,state:'ACTIVE'|'DELETING'|'CLOSED',busy:boolean,creditLimit:number,pendingCreditLimit?:number,lastCreditTick:number|null,createdAt:number,lastReceivedAt:number|null,discardedWhileClosing:number,cancelPromise?:Promise<void>}} OwnedEntry */
 
 export class OwnedSubscriptionSession {
   #router = new PlusReceiveRouter();
@@ -17,6 +17,9 @@ export class OwnedSubscriptionSession {
   /** @type {'OPEN'|'CLOSING'|'CLOSED'|'ABORTED'} */
   #state = 'OPEN';
   #creating = 0;
+  /** @type {PlusIncomingMessage[]} */
+  #preRegistration = [];
+  #preRegistrationBytes = 0;
   /** @type {Promise<void>|undefined} */
   #closePromise;
   /** @type {{operation:string,code:string}[]} */
@@ -28,8 +31,9 @@ export class OwnedSubscriptionSession {
   #lastNow = -Infinity;
   #timeoutMs;
   #staleAfterMs;
+  #creditTickBase;
 
-  /** @param {{sessionRid:number,containerRid:number,adapter:SubscriptionLifecycleAdapter,clock?:()=>number,requestTimeoutMs?:number,staleAfterMs?:number}} options */
+  /** @param {{sessionRid:number,containerRid:number,adapter:SubscriptionLifecycleAdapter,clock?:()=>number,requestTimeoutMs?:number,staleAfterMs?:number,creditTickBase?:0|1}} options */
   constructor(options) {
     for (const rid of [options.sessionRid, options.containerRid]) {
       if (!Number.isInteger(rid) || rid < 1 || rid > 0xFFFFFFFF) throw new PlusError('ARGUMENT', 'Expected owned session/container RIDs');
@@ -45,6 +49,8 @@ export class OwnedSubscriptionSession {
     this.#clock = options.clock ?? (() => performance.now());
     this.#timeoutMs = options.requestTimeoutMs ?? 1000;
     this.#staleAfterMs = options.staleAfterMs ?? 3000;
+    this.#creditTickBase = options.creditTickBase ?? 0;
+    if (![0, 1].includes(this.#creditTickBase)) throw new PlusError('ARGUMENT', 'Credit tick base must be zero or one');
     if (![this.#timeoutMs, this.#staleAfterMs].every(value => Number.isSafeInteger(value) && value >= 1 && value <= 60000)) throw new PlusError('ARGUMENT', 'Lifecycle time budgets must be 1..60000 ms');
     this.#now();
   }
@@ -53,6 +59,7 @@ export class OwnedSubscriptionSession {
   async create(selection, options = {}) {
     this.#requireOpen();
     if (options.signal?.aborted) throw new PlusError('CANCELLED', 'Subscription creation cancelled before transmission');
+    if (this.#creating) throw new PlusError('CONCURRENCY_LIMIT', 'Only one subscription creation may be pending');
     if (this.#entries.size + this.#creating >= 16) throw new PlusError('SESSION_LIMIT', 'At most 16 subscription handles per session generation');
     const credits = options.credits ?? 10;
     const queueSize = options.queueSize;
@@ -77,6 +84,12 @@ export class OwnedSubscriptionSession {
         creditLimit: credits, lastCreditTick: null, createdAt: this.#now(), lastReceivedAt: null, discardedWhileClosing: 0 });
       this.#router.register(owner.subscriptionRid, handle, message => this.#receive(entry, message));
       this.#entries.set(handle, entry);
+      for (const message of this.#preRegistration) {
+        if (message.body.readUInt32BE(1) !== owner.subscriptionRid) throw new PlusError('CORRELATION', 'Pre-registration notification has a foreign owner');
+        this.#receive(entry, message);
+      }
+      this.#preRegistration = [];
+      this.#preRegistrationBytes = 0;
       return handle;
     } catch (error) { this.#fail('create', error); throw error; }
     finally { this.#creating--; }
@@ -85,7 +98,21 @@ export class OwnedSubscriptionSession {
   /** @param {PlusIncomingMessage[]} messages @param {boolean} replyPending */
   route(messages, replyPending) {
     if (this.#state === 'CLOSED' || this.#state === 'ABORTED') throw new PlusError('DISCONNECTED', 'Subscription session is closed');
-    try { return this.#router.route(messages, replyPending); }
+    try {
+      /** @type {PlusIncomingMessage[]} */
+      const routed = [];
+      for (const message of messages) {
+        if (this.#creating && message.body[0] === 0x33 && message.body.length >= 5
+          && ![...this.#entries.values()].some(entry => entry.receipt.subscriptionRid === message.body.readUInt32BE(1))) {
+          if (this.#preRegistration.length >= 16 || this.#preRegistrationBytes + message.body.length > 1048576) {
+            throw new PlusError('RESPONSE_LIMIT', 'Pre-registration notification buffer exceeded');
+          }
+          this.#preRegistration.push({ ...message, body: Buffer.from(message.body) });
+          this.#preRegistrationBytes += message.body.length;
+        } else routed.push(message);
+      }
+      return this.#router.route(routed, replyPending);
+    }
     catch (error) { this.#fail('receive', error); throw error; }
   }
 
@@ -99,12 +126,13 @@ export class OwnedSubscriptionSession {
     const creditLimit = entry.creditLimit + credits;
     if (creditLimit > 254) throw new PlusError('UNSUPPORTED_PROFILE', 'Credit rollover is not qualified; create a new subscription');
     entry.busy = true;
+    entry.pendingCreditLimit = creditLimit;
     try {
       await this.#call(signal => this.#adapter.renew(entry.receipt, creditLimit, signal));
       this.#requireOpen();
       entry.creditLimit = creditLimit;
     } catch (error) { this.#fail('renew', error); throw error; }
-    finally { entry.busy = false; }
+    finally { entry.busy = false; entry.pendingCreditLimit = undefined; }
   }
 
   /** @param {object} handle */
@@ -114,7 +142,7 @@ export class OwnedSubscriptionSession {
   diagnostics(handle) {
     const entry = this.#entry(handle);
     const now = this.#now();
-    const creditsRemaining = entry.creditLimit - (entry.lastCreditTick === null ? 0 : entry.lastCreditTick + 1);
+    const creditsRemaining = entry.creditLimit - (entry.lastCreditTick === null ? 0 : entry.lastCreditTick - this.#creditTickBase + 1);
     const buffer = entry.buffer.diagnostics;
     const freshness = entry.state !== 'ACTIVE' || this.#state !== 'OPEN' ? 'CLOSED'
       : buffer.requiresResynchronization ? 'RESYNC_REQUIRED' : creditsRemaining === 0 ? 'CREDIT_EXHAUSTED'
@@ -123,7 +151,7 @@ export class OwnedSubscriptionSession {
     return { ...buffer, state: entry.state, freshness, creditLimit: entry.creditLimit, creditsRemaining,
       lastCreditTick: entry.lastCreditTick, lastReceivedAtMonotonicMs: entry.lastReceivedAt,
       discardedWhileClosing: entry.discardedWhileClosing, quality: 'UNKNOWN',
-      creditSemantics: 'ZERO_BASED_REFERENCE_TICKS_NO_ROLLOVER_UNQUALIFIED' };
+      creditSemantics: `${this.#creditTickBase === 0 ? 'ZERO' : 'ONE'}_BASED_TICKS_NO_ROLLOVER_UNQUALIFIED` };
   }
 
   /** @param {object} handle @returns {Promise<void>} */
@@ -157,13 +185,16 @@ export class OwnedSubscriptionSession {
     return this.#closePromise;
   }
 
-  abort() {
+  /** @param {unknown} [reason] */
+  abort(reason) {
     if (this.#state === 'CLOSED' || this.#state === 'ABORTED') return;
     this.#state = 'ABORTED';
     this.#abort.abort();
     this.#router.close();
+    this.#preRegistration = [];
+    this.#preRegistrationBytes = 0;
     for (const entry of this.#entries.values()) { entry.state = 'CLOSED'; entry.buffer.close(); }
-    try { this.#adapter.abort(); }
+    try { this.#adapter.abort(reason); }
     catch (error) { this.#recordFailure('abort', error); }
   }
 
@@ -175,7 +206,7 @@ export class OwnedSubscriptionSession {
     const update = decodeDataNotification(message, entry.owner);
     if (entry.state !== 'ACTIVE' || this.#state !== 'OPEN') { entry.discardedWhileClosing++; return; }
     if (!entry.buffer.push(message)) return;
-    if (update.creditTick >= entry.creditLimit || (entry.lastCreditTick !== null && update.creditTick <= entry.lastCreditTick)) {
+    if (update.creditTick < this.#creditTickBase || update.creditTick >= (entry.pendingCreditLimit ?? entry.creditLimit) + this.#creditTickBase || (entry.lastCreditTick !== null && update.creditTick <= entry.lastCreditTick)) {
       throw new PlusError('CORRELATION', 'Notification exceeded the finite credit window or reordered its credit tick');
     }
     entry.lastCreditTick = update.creditTick;
@@ -224,5 +255,5 @@ export class OwnedSubscriptionSession {
   /** @param {string} operation @param {unknown} error */
   #recordFailure(operation, error) { if (this.#failures.length < 16) this.#failures.push({ operation, code: error instanceof PlusError ? error.code : 'ADAPTER_FAILURE' }); }
   /** @param {string} operation @param {unknown} error */
-  #fail(operation, error) { this.#recordFailure(operation, error); this.abort(); }
+  #fail(operation, error) { this.#recordFailure(operation, error); this.abort(error); }
 }

@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { rootCertificates } from 'node:tls';
 import { randomUUID, X509Certificate } from 'node:crypto';
-import { Cursor, decodeValue, decodeDataNotification, vlq, u32, PlusAssembler, encodeOperation, assertOutgoing, responsePayload, decodeObjects } from '../../src/protocol/s7commplus/codec.js';
+import { Cursor, decodeValue, decodeDataNotification, vlq, u32, PlusAssembler, encodeOperation, assertOutgoing, responsePayload, decodeObjects, subscriptionCreatePayload } from '../../src/protocol/s7commplus/codec.js';
 import { S7CommPlusClient } from '../../src/client/s7commplus-client.js';
 import { fixture, validateSessionRequest, encodeTestUInt64 } from '../s7commplus-fixture.js';
 import { saveSoftwareSnapshot, verifySoftwareSnapshot } from '../helpers/program-store.js';
@@ -15,6 +15,22 @@ import { OwnedSubscriptionSession } from '../../src/protocol/s7commplus/subscrip
 
 const context = { version: 1, sessionId: 0x12345678 };
 describe('archive-backed read descriptors', () => {
+  it('encodes only explicitly authorized scalar DB or marker writes', () => {
+    const operation = { kind: 'writeScalar', scalar: { accessArea: 0x8A0E0007, lids: [101], wireType: 1, value: 1 } };
+    const authorized = { sessionId: 77, version: 2, integrityId: 3, scalarWriteAuthorized: true };
+    const frame = encodeOperation(operation, authorized, 8);
+    expect(frame.readUInt16BE(7)).toBe(0x0542);
+    expect(frame.subarray(18, -4).toString('hex')).toBe('0000000001050088d0b88007029376650100010100000004e88969001200000000896a001300896b000400000300000000');
+    expect(() => encodeOperation(operation, { ...authorized, scalarWriteAuthorized: false }, 8)).toThrow();
+    expect(() => encodeOperation({ ...operation, scalar: { ...operation.scalar, accessArea: 81 } }, authorized, 8)).toThrow();
+    expect(() => encodeOperation({ ...operation, scalar: { ...operation.scalar, value: 2 } }, authorized, 8)).toThrow();
+    for (const wireType of [2, 10]) {
+      const scalar = { ...operation.scalar, wireType, value: 255 };
+      expect(encodeOperation({ ...operation, scalar }, authorized, 8).subarray(18, -4).toString('hex'))
+        .toBe(frame.subarray(18, -4).toString('hex').replace('650100010100', `650100${wireType.toString(16).padStart(2, '0')}ff00`));
+      for (const value of [-1, 256, 1.5]) expect(() => encodeOperation({ ...operation, scalar: { ...scalar, value } }, authorized, 8)).toThrow();
+    }
+  });
   it('encodes only the exact ClassicBlob DB offset address form', () => {
     const operation = { kind: 'read', items: [{ accessArea: 0x8A0E0007, accessSubArea: 2550, lids: [3, 12, 4] }] };
     const frame = encodeOperation(operation, context, 1);
@@ -200,6 +216,12 @@ describe('offline data notification decoding', () => {
     expect(result.items).toEqual([]);
     expect(result.timestampSemantics).toContain('NOT_QUALIFIED_SCAN_TIME');
   });
+  it('accepts only the observed four-byte zero notification suffix', () => {
+    const body = Buffer.concat([header, fixed, Buffer.alloc(5)]);
+    expect(decodeDataNotification(message(body), owner).items[0].value?.value).toBe(true);
+    body[body.length - 1] = 1;
+    expect(() => decodeDataNotification(message(body), owner)).toThrow(/Trailing/);
+  });
   it('rejects wrong owners, changed subscriptions, unknown references and duplicate value/error records', () => {
     const body = Buffer.concat([header, fixed, Buffer.from([0])]);
     expect(() => decodeDataNotification(message(body), { ...owner, subscriptionRid: 99 })).toThrow(/owner/);
@@ -287,6 +309,48 @@ describe('offline data notification decoding', () => {
     expect(updates).toHaveLength(1);
     expect(decodeDataNotification(updates[0], owner).items[0].value?.value).toBe(true);
     expect(assembler.lastMessageFragmentCount).toBe(2);
+  });
+});
+
+describe('offline subscription request encoding', () => {
+  const request = { containerRid: 0x70000CB8, relationId: 0x7FFFC001, changeCounter: 1, creditLimit: 10, cycleMs: 100,
+    items: [{ referenceId: 1, accessArea: 0x8A0E0027, lids: [0x25, 0x1A] }] };
+  it('matches the published reference CreateObject payload and integrity insertion offset', () => {
+    const captured = Buffer.from('70000cb80004000000000002a17fffc00187690000a38169001517537562736372697074696f6e5f32313437343637323635a3883a000200a3876a00030000a3876b000900a38810000214a38811000101a3881820040b888084800000018880908003010088d0b88027009376251aa38819000464a3881b000200a3881c000200a3881d0007000aa3881e0003ffffa3881f000200a200000000', 'hex');
+    const payload = subscriptionCreatePayload(request);
+    expect(Buffer.concat([payload.subarray(0, 11), Buffer.from([2]), payload.subarray(11)])).toEqual(captured);
+    expect(() => encodeOperation({ kind: 'subscriptionCreate' }, context, 1)).toThrow();
+    const operation = { kind: 'subscriptionCreate', subscription: request };
+    const authorized = { sessionId: 77, version: 2, integrityId: 2, subscriptionAuthorized: true, subscriptionContainerId: request.containerRid };
+    const frame = encodeOperation(operation, authorized, 7);
+    expect(frame[17]).toBe(0x34);
+    expect(frame.readUInt16BE(7)).toBe(0x04CA);
+    expect(frame.subarray(18, -4)).toEqual(captured);
+    expect(() => encodeOperation(operation, { ...authorized, subscriptionAuthorized: false }, 7)).toThrow();
+    expect(() => encodeOperation(operation, { ...authorized, subscriptionContainerId: 88 }, 7)).toThrow();
+    assertOutgoing(frame, operation, authorized, 7);
+  });
+  it('encodes container-wide cleanup only with explicit session authorization', () => {
+    const operation = { kind: 'subscriptionDelete' };
+    const authorized = { sessionId: 77, version: 2, integrityId: 3, subscriptionAuthorized: true, subscriptionContainerId: 0x70000CB8 };
+    const frame = encodeOperation(operation, authorized, 8);
+    expect(frame.readUInt16BE(7)).toBe(0x04D4);
+    expect(frame.subarray(18, -4).toString('hex')).toBe('70000cb800000004e88969001200000000896a001300896b000400000300000000');
+    expect(() => encodeOperation(operation, { ...authorized, subscriptionAuthorized: false }, 8)).toThrow();
+    expect(() => encodeOperation({ ...operation, objectId: 99 }, authorized, 8)).toThrow();
+  });
+  it('rejects invalid limits, ambiguous references, paths and oversized requests', () => {
+    for (const invalid of [
+      { ...request, containerRid: 0 }, { ...request, relationId: 0 }, { ...request, changeCounter: 0 },
+      { ...request, creditLimit: -1 }, { ...request, creditLimit: 255 }, { ...request, cycleMs: 0 },
+      { ...request, items: [] }, { ...request, items: [request.items[0], request.items[0]] },
+      { ...request, items: [{ ...request.items[0], accessArea: 201 }] },
+      { ...request, items: [{ ...request.items[0], accessArea: 0x8A0E0000 }] },
+      { ...request, items: [{ ...request.items[0], lids: [] }] },
+      { ...request, items: [{ ...request.items[0], lids: [-1] }] },
+    ]) expect(() => subscriptionCreatePayload(invalid)).toThrow();
+    const large = Array.from({ length: 64 }, (_, index) => ({ referenceId: index + 1, accessArea: 0x8A0E0027, lids: Array(16).fill(0xFFFFFFFF) }));
+    expect(() => subscriptionCreatePayload({ ...request, items: large })).toThrow(/frame budget/);
   });
 });
 
@@ -383,6 +447,14 @@ describe('offline owned subscription lifecycle', () => {
     expect(adapter.renew).not.toHaveBeenCalled();
     await session.close();
   });
+  it('counts the observed one-based credit ticks through exhaustion', async () => {
+    const { adapter } = setup();
+    const session = new OwnedSubscriptionSession({ ...receipt, adapter, creditTickBase: 1 });
+    const handle = await session.create(selection, { credits: 2 });
+    session.route([update(0, 1), update(1, 2)], false);
+    expect(session.diagnostics(handle)).toMatchObject({ creditsRemaining: 0, freshness: 'CREDIT_EXHAUSTED', creditSemantics: 'ONE_BASED_TICKS_NO_ROLLOVER_UNQUALIFIED' });
+    await session.close();
+  });
   it('preflights finite grants and owner options and never permits unqualified rollover', async () => {
     const { session, adapter } = setup();
     for (const credits of [-1, 0, 255, Infinity]) await expect(session.create(selection, { credits })).rejects.toMatchObject({ code: 'ARGUMENT' });
@@ -415,6 +487,71 @@ describe('offline owned subscription lifecycle', () => {
     await expect(failed.session.create(selection)).rejects.toThrow(/lost/);
     expect(failed.session.report).toMatchObject({ state: 'ABORTED', handles: 0 });
     expect(failed.adapter.deleteOwned).not.toHaveBeenCalled();
+  });
+  it('replays bounded notifications received before the creation acknowledgment', async () => {
+    const { session, adapter } = setup();
+    /** @type {(value:typeof receipt)=>void} */
+    let complete = () => {};
+    adapter.create.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const pending = session.create(selection);
+    await Promise.resolve();
+    await expect(session.create(selection)).rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' });
+    const reply = { version: 2, body: Buffer.from([0x32]) };
+    const early = update(1, 0);
+    expect(session.route([early, reply, update(2, 1)], true)).toBe(reply);
+    early.body.fill(0);
+    complete(receipt);
+    const handle = await pending;
+    expect(session.pop(handle)?.sequenceNumber).toBe(1);
+    expect(session.pop(handle)?.sequenceNumber).toBe(2);
+    await session.close();
+  });
+  it.each(['foreign', 'generation', 'overflow'])('aborts on %s pre-registration notifications', async kind => {
+    const { session, adapter } = setup();
+    /** @type {(value:typeof receipt)=>void} */
+    let complete = () => {};
+    adapter.create.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const pending = session.create(selection);
+    const rejected = expect(pending).rejects.toMatchObject({ code: kind === 'overflow' ? 'CANCELLED' : 'CORRELATION' });
+    await Promise.resolve();
+    if (kind === 'overflow') {
+      expect(() => session.route(Array.from({ length: 17 }, (_, index) => update(index + 1, index)), true)).toThrow(/buffer exceeded/);
+    } else {
+      const message = update(1, 0, kind === 'foreign' ? 99 : receipt.subscriptionRid);
+      if (kind === 'generation') message.body[13] = 2;
+      session.route([message], true);
+      complete(receipt);
+    }
+    await rejected;
+    expect(session.report.state).toBe('ABORTED');
+    expect(adapter.abort).toHaveBeenCalledOnce();
+    expect(adapter.deleteOwned).not.toHaveBeenCalled();
+  });
+  it('does not rebind a cancelled subscription notification to a pending creation', async () => {
+    const { session, adapter } = setup();
+    const handle = await session.create(selection);
+    await session.cancel(handle);
+    adapter.create.mockImplementation(() => new Promise(() => {}));
+    const pending = session.create({ ...selection, changeCounter: 2 });
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
+    await Promise.resolve();
+    expect(() => session.route([update(1, 0)], true)).toThrow(/Unowned/);
+    await rejected;
+    expect(session.report.state).toBe('ABORTED');
+  });
+  it('aborts rather than buffering an oversized pre-registration notification', async () => {
+    const { session, adapter } = setup();
+    adapter.create.mockImplementation(() => new Promise(() => {}));
+    const pending = session.create(selection);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
+    await Promise.resolve();
+    const body = Buffer.alloc(1048577);
+    body[0] = 0x33;
+    body.writeUInt32BE(receipt.subscriptionRid, 1);
+    expect(() => session.route([{ version: 2, body }], true)).toThrow(/buffer exceeded/);
+    await rejected;
+    expect(session.report.state).toBe('ABORTED');
+    expect(adapter.abort).toHaveBeenCalledOnce();
   });
   it('cancels a pending creation promptly and cannot attach a late acknowledgement', async () => {
     const { session, adapter } = setup();
@@ -815,6 +952,25 @@ describe('S7CommPlus loopback lifecycle (never live)', () => {
     expect(client.connected).toBe(false);
     expect(client.report.sessionEstablished).toBe(true);
   });
+  it.each([{ container: undefined, available: false }, { container: 0, available: false }, { container: 88, available: true }])('tracks an optional session-owned subscription container', async ({ container, available }) => {
+    const server = await fixture({ subscriptionContainerRid: container });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port });
+    try {
+      await client.connect();
+      expect(client.report.capabilities.subscriptionContainerAvailable).toBe(available);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+    expect(client.report.capabilities.subscriptionContainerAvailable).toBe(false);
+  });
+  it.each([77])('rejects invalid subscription container RID %i before session setup', async container => {
+    const server = await fixture({ subscriptionContainerRid: container });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port });
+    try {
+      await expect(client.connect()).rejects.toMatchObject({ code: 'SESSION_CREATE_REJECTED' });
+      expect(server.requests).toHaveLength(2);
+      expect(client.report.capabilities.subscriptionContainerAvailable).toBe(false);
+    } finally { await client.disconnect(); await server.close(); }
+  });
   it('bounds parallel endpoint sessions and releases only the disconnected connection', async () => {
     const server = await fixture();
     const clients = Array.from({ length: 3 }, (_, index) => new S7CommPlusClient({ host: '127.0.0.1', port: server.port, limits: { maxConnectionsPerTarget: index === 2 ? 16 : 2 } }));
@@ -1039,6 +1195,66 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
   /** @type {{key:Buffer,cert:Buffer}} */
   let credentials;
   let certificateSha256 = '';
+  it.each(['success', 'rejected', 'lost'])('handles explicit scalar write outcome %s', async mode => {
+    const server = await fixture({ tls: credentials, metadata: true, scalarWrite: /** @type {'success'|'rejected'|'lost'} */ (mode) });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'tls', tls: { ca: credentials.cert, certificateSha256 }, limits: { maxRequests: 16, readPacingMs: 10 } });
+    try {
+      await client.connect();
+      const discovery = await client.listAreaMembers({ type: 'M' });
+      const member = discovery.members.find(item => item.path === 'Enabled');
+      if (!member) throw new Error('Missing fixture marker');
+      await expect(client.writeMember(member, false)).rejects.toMatchObject({ code: 'WRITE_CONFIRMATION_REQUIRED' });
+      await expect(client.writeMember({ ...member }, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'UNVERIFIED_ADDRESS' });
+      await expect(client.writeMember(member, 1, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'ARGUMENT' });
+      const previousProduction = process.env.S7PROXY_PRODUCTION_HOST;
+      const count = server.requests.length;
+      try {
+        process.env.S7PROXY_PRODUCTION_HOST = '::ffff:127.0.0.1';
+        await expect(client.writeMember(member, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'READ_ONLY_DENIED' });
+      } finally {
+        if (previousProduction === undefined) delete process.env.S7PROXY_PRODUCTION_HOST;
+        else process.env.S7PROXY_PRODUCTION_HOST = previousProduction;
+      }
+      expect(server.requests).toHaveLength(count);
+      const write = client.writeMember(member, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` });
+      const competing = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'tls', tls: { ca: credentials.cert, certificateSha256 } });
+      await expect(competing.connect()).rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' });
+      if (mode === 'success') {
+        await expect(write).resolves.toMatchObject({ status: 'ACKNOWLEDGED', verified: false });
+        expect((await client.readMember(member)).observation.value).toBe(false);
+        await client.writeMember(member, true, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` });
+        expect((await client.readMember(member)).observation.value).toBe(true);
+      } else await expect(write).rejects.toMatchObject({ code: mode === 'rejected' ? 'ITEM_REJECTED' : 'UNKNOWN_WRITE_OUTCOME' });
+      expect(server.requests.filter(request => request.functionCode === 0x0542 && request.sequence >= 3)).toHaveLength(mode === 'success' ? 2 : 1);
+      expect(client.productionReadOnly).toBe(false);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+  it.each(['before', 'after', 'none'])('routes an owned subscription with notification %s the acknowledgement and cleans up', async mode => {
+    const server = await fixture({ tls: credentials, subscriptionContainerRid: 0x70000CB8, subscription: /** @type {'before'|'after'|'none'} */ (mode) });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'tls', tls: { ca: credentials.cert, certificateSha256 }, limits: { maxRequests: 12, readPacingMs: 10, maxResponseBytes: 2097152 } });
+    const member = { path: 'Value', parentPath: null, datatype: 'DINT', softdatatype: 7, memberId: 101, typeInfoId: null,
+      referencedTypeInfoId: null, accessPath: [101], symbolCrc: 0, arrayDimensions: [], readable: true, status: 'ARCHIVE_UNVERIFIED' };
+    try {
+      await client.connect();
+      const bound = client.bindArchiveMembers({ type: 'DB', number: 7, name: 'Sample', objectRid: 0x8A0E0007 }, [member]);
+      await expect(client.createSubscription([{ ...bound.members[0] }])).rejects.toMatchObject({ code: 'UNVERIFIED_ADDRESS' });
+      const before = server.requests.length;
+      for (const queueSize of [0, 129, 1.5]) await expect(client.createSubscription(bound.members, { queueSize })).rejects.toMatchObject({ code: 'ARGUMENT' });
+      expect(server.requests).toHaveLength(before);
+      const handle = await client.createSubscription(bound.members);
+      const update = client.popSubscription(handle);
+      if (mode === 'none') expect(update).toBeNull();
+      else expect(update?.items[0]).toMatchObject({ referenceId: 1, observation: { quality: 'GOOD', value: 42 } });
+      await expect(client.createSubscription(bound.members)).rejects.toMatchObject({ code: 'SESSION_LIMIT' });
+      const renewal = client.renewSubscription(handle, 2);
+      await expect(client.readCpuState()).rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' });
+      await expect(renewal).resolves.toEqual({ status: 'SENT', acknowledged: false });
+      await client.deleteSubscription(handle);
+      expect(server.requests.slice(-3).map(request => request.functionCode)).toEqual([0x04CA, 0x04F2, 0x04D4]);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 's7proxy-loopback-tls-'));
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-noenc', '-keyout', join(directory, 'key.pem'),

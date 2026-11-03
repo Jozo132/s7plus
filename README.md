@@ -7,7 +7,7 @@ and an explicit transparent forwarding mode:
 | --- | --- | --- |
 | Classic S7Comm | TCP proxying, connection pools/failover, polling DAQ, structured DB reads/writes, REST/WebSocket services and a snap7-compatible subset. | JavaScript protocol engine; requires compatible PLC configuration and known addresses/layouts. |
 | Transparent S7Comm/Plus | One-to-one TCP pass-through of original COTP, classic/Plus messages and optional end-to-end TLS. | Set `listen.mode: "passthrough"`. No TLS termination, protocol-operation inspection, pooling or session migration. |
-| Native S7CommPlus | Experimental symbolic DB/I/Q/M discovery, typed reads, bounded diagnostic snapshots and restricted native program-content extraction. | Separate client, not the proxy/DAQ/REST backend. Read-only by default; CPU RUN requires explicit per-call confirmation. Live Plus subscriptions are not enabled. |
+| Native S7CommPlus | Experimental symbolic DB/I/Q/M discovery, typed reads, bounded push subscriptions, restricted scalar writes, diagnostic snapshots and native program-content extraction. | Separate client, not the proxy/DAQ/REST backend. Writes and CPU RUN require explicit per-call confirmation. |
 
 Only connect to explicitly authorized controllers. Read-only traffic can still
 affect communications and PLC scan time. Accepted software limits and successful
@@ -357,13 +357,14 @@ without providing native decoding, acquisition or a public subscription API.
 | DB/type discovery | `listDataBlocks()`, `getBlockMetadata()`, `getTypeInfo()`, `listBlockMembers()`; [symbol discovery](#native-symbol-discovery) | Bounded, session-cached metadata; not proof of running program revision. |
 | Process-area discovery | `getAreaMetadata()`, `listAreaMembers()`; [I/Q/M](#iqm-exploration) | Native symbolic descriptors; not fabricated absolute addresses. |
 | Values | `readMember()`, `readMembers()`, `pollMembers()`, `readSymbol()`, `readSymbolic()`; [batch reads](#batch-value-reads) | RUN required; discovered member descriptors belong to one client session. |
+| Scalar writes | `writeMember()`; [explicit scalar writes](#explicit-scalar-writes) | Explicitly confirmed runtime-discovered DB/M BOOL, BYTE or USINT only; no automatic retry or readback. |
 | CPU/communication snapshots | `readCpuState()`, `readCommunicationResources()`; [resources](#communication-resources) | Fresh bounded reads; resource counts do not establish safe connection capacity. |
 | Alarm snapshot | `readActiveAlarms()`; [alarms](#current-alarm-diagnostics) | Current/update-relevant service, not diagnostic history or acknowledgement. |
 | Program metadata | `listProgramBlocks()`, `readProgramEventMetadata()`, `explore()`; [events](#native-software-event-metadata) | Native identities, attributes and relations; not executable equivalence or execution history. |
 | Program content | `uploadProgramBlock()`, `uploadProgram()`; [content](#native-program-content-as-in-memory-files) | Restricted verified-TLS profile; in-memory components, not a restorable backup. `uploadBlock()` remains unsupported. |
 | CPU control | `cpuStart()`; [explicit RUN](#explicit-cpu-start) | Confirmed RUN only. STOP, reset, generic writes, force and downloads remain denied. |
 | Concurrency | [Independent HMI sessions](#concurrent-hmi-sessions) | One in-flight request per client, bounded FIFO; separate clients for parallel traffic. |
-| Push acquisition | [Offline notification foundation](#offline-data-notification-foundation) | Parser, owned routing and lifecycle adapter tested offline; no public live subscription API or wire adapter. |
+| Push acquisition | `createSubscription()`, `popSubscription()`, `renewSubscription()`, `subscriptionDiagnostics()`, `deleteSubscription()`; [native subscriptions](#native-subscriptions) | One owned container per TLS V2 session; bounded queues and finite credits. |
 | Sampling measurements | [Benchmark API/CLI](#parallel-sampling-and-stress-measurement) | Explicit finite workload; polling is neither push nor scan-synchronous acquisition. |
 
 ### Security And Sessions
@@ -1036,8 +1037,9 @@ no role. `returned` is the unambiguous scalar role supplied by the PLC, or null
 when unavailable; the observed value 2 is not a universal firmware guarantee.
 
 CPU start requires an exclusive idle endpoint connection in this process and
-blocks additional connection admission while control is active. STOP, reset and
-generic writes remain denied. These local guards cannot detect a TIA Portal
+blocks additional connection admission while control is active. Scalar writes also
+require an exclusive idle session. STOP, reset and generic writes remain denied.
+These local guards cannot detect a TIA Portal
 connection or a different process. HMI transport identity alone does not
 prove PG coexistence or reserve engineering resources on the PLC. The corrected
 session payload has bounded coexistence evidence on one controller, not a
@@ -1051,69 +1053,72 @@ Limited hardware reads on S7-1200 controllers do not qualify other controller or
 security profiles, every DB or datatype, or production load. See
 [reference licensing](THIRD_PARTY_NOTICES.md).
 
-### Offline Data Notification Foundation
+<a id="offline-data-notification-foundation"></a>
 
-This is **not live subscription support**. The internal `decodeDataNotification`
-and `DataNotificationBuffer` modules accept already assembled V2 bodies offline.
-`PlusReceiveRouter` is the native client's single application dispatcher: replies
-retain the existing sequence/function/integrity checks; notifications require a
-session-local owner token. No live owner registration API or lifecycle wire adapter
-is enabled, so unsolicited live notifications still fail closed. No outgoing
-operation was added and the 22 named native client methods are unchanged.
+### Native Subscriptions
 
-The supported format is opcode `0x33`, owner RID, the six-byte `040000000000`
-marker, credit tick, UInt32-VLQ sequence, change counter/optional timestamp and
-terminated item records. Status `0x92` uses a fixed UInt32 reference, `0x9B` a VLQ
-reference; `0x03`/`0x13` retain explicit item errors without inventing values.
-Registered references and the expected owner/change counter must match. Unknown
-statuses, markers, versions, duplicate references, truncation and trailing bytes
-(including possible alarm extensions) are rejected, not silently skipped.
-Timestamps remain lossless decimal strings with unqualified reference-microsecond
-semantics; they are not qualified scan times. Each result is a delta, not a full
-snapshot or evidence that omitted members are freshly GOOD.
+After explicit TLS V2 connection and discovery, create a subscription from 1..64
+distinct readable session-bound symbolic members. RUN and a PLC-provided owned
+subscription container are required. The session supports one subscription for
+its lifetime; deletion removes the owned container, not an individual child.
 
-Limits are 1..4096 items and 16..1048576 body bytes (defaults: registered reference
-count and 262144 bytes). The buffer defaults to 16 slots and 1048576 retained
-wire-body bytes; maxima are 128 slots and 16777216 bytes. This byte accounting is
-not a total JavaScript heap measurement. Overflow drops oldest updates and counts
-them explicitly. Gaps, reordering/ambiguous sequence distances and overflow leave
-a sticky resynchronization requirement. Duplicates are counted and rejected.
-UInt32 modular sequence ordering/wrap is an **offline reference assumption**, not
-hardware qualification. A new buffer does not establish an initial value baseline;
-close discards queued deltas and rejects further input. Caller-supplied owner fields
-are not proof of live session ownership.
+```js
+const handle = await plc.createSubscription(members, { cycleMs: 250, credits: 10, queueSize: 16 });
+try {
+  const delta = plc.popSubscription(handle); // null when no update is queued
+  console.log(delta, plc.subscriptionDiagnostics(handle));
+  const renewal = await plc.renewSubscription(handle, 10);
+  console.log(renewal); // SENT, not acknowledged by the PLC
+} finally {
+  await plc.deleteSubscription(handle);
+}
+```
 
-`OwnedSubscriptionSession` is an **offline lifecycle adapter**, not a public PLC
-subscription API. Its trusted adapter supplies create/renew/delete-owned/transport-
-abort operations; no wire encoder or live authorization is supplied. The adapter
-must serialize qualified requests, validate actual PLC response ownership and stop
-the transport when aborted. The helper validates receipt session/container IDs,
-child RID uniqueness and opaque handle identity. It never accepts a caller's RID
-as a deletion command, deletes a container, or guesses an object after uncertain
-creation. RIDs cannot be reused within one generation; at most 16 handles may be
-issued. A new session requires explicit recreation and a new baseline, not replay
-of old handles or automatic restoration.
+The caller drains the queue and schedules renewal. Credits are finite, 1..254
+in total before rollover; renewal is fire-and-forget and sending it does not
+prove PLC acceptance. Silence may mean credit exhaustion, unchanged values or
+an unavailable connection. The one-based credit tick profile and renewal past
+the initial limit were observed on one S7-1200 V4.5 lab CPU, not universally
+qualified. No automatic reconnect, recreation or renewal is performed. Session
+request, byte, duration and pacing limits still apply.
 
-Finite credits use a deliberately narrow **unqualified reference assumption**:
-zero-based ticks below an acknowledged boundary, 1..254 total credits before
-rollover. Initial grants default to 10; explicit renewal only commits after an
-acknowledgement. Unlimited credits, rollover and automatic replenishment are
-rejected. Gaps consume the observed tick distance; duplicates do not extend
-freshness or consume a second credit. Invalid credit windows abort the transport.
-Reported states include `AWAITING_INITIAL`, `CREDIT_EXHAUSTED`, `STALE`,
-`RESYNC_REQUIRED`, `RECENT_DELTA_NOT_GOOD` and `CLOSED`; quality remains `UNKNOWN`.
-Silence is checked using a monotonic clock (default 3000 ms) whenever diagnostics
-are requested; it is not an autonomous staleness event or a PLC timestamp.
+Notifications are deltas, not full snapshots or proof that omitted members are
+fresh. Sequence gaps, reordering or buffer overflow require resynchronization;
+inspect diagnostics and establish a new session/baseline. Quality and timestamp
+semantics are not PLC-scan qualified. Unknown notification formats fail closed;
+alarm push is unsupported. Pre-cancelled creation sends nothing; uncertain
+creation, renewal or deletion aborts the transport without speculative deletion
+or retries. Disconnect attempts owned cleanup, and reports teardown warnings.
+Raw notifications and responses may appear in the bounded diagnostic transcript.
+On the lab S7-1200 V4.5, one subscription returned GOOD DB, I, Q and M values;
+another continued past its initial five credits after renewal and was deleted.
+Some normal disconnects reported `ECONNRESET` as a teardown warning after the
+owned-container deletion was acknowledged.
 
-Lifecycle calls have bounded deadlines (default 1000 ms, configurable 1..60000 ms).
-Pre-cancelled creation sends nothing; cancellation/timeout after transmission or
-an uncertain acknowledgement aborts without speculative deletion. Normal close
-deletes only acknowledged owned children once, then closes local routing; the
-adapter owner remains responsible for its transport's final normal close.
-Known deltas arriving during deletion are parsed and counted as discarded, never
-queued as fresh samples. Cleanup failure is retained, aborts transport and is not
-retried. Alarm notifications, scan-time/quality qualification and a live lifecycle
-adapter remain unimplemented.
+### Explicit Scalar Writes
+
+`writeMember(member, value, options)` requires a fresh runtime-discovered,
+session-bound symbolic DB or M member, full access, RUN, TLS V2 and an exclusive
+idle session without a subscription. Only BOOL, BYTE and USINT are accepted;
+BYTE/USINT values must be integers from 0 to 255. Inputs, outputs, cached/archive
+descriptors and classic offsets are rejected. The configured production IP is
+denied based on the connected address, including hostname and mapped-IP aliases.
+
+```js
+const result = await plc.writeMember(member, desiredValue, {
+  confirmWrite: true,
+  confirmTarget: `${host}:102`,
+});
+const readback = await plc.readMember(member);
+```
+
+Verified TLS is required unless `allowUnverifiedIdentity: true` is explicitly
+provided for an isolated lab. TOFU does not independently authenticate the first
+connection. An acknowledgment is not readback verification. A lost or ambiguous
+response raises `UNKNOWN_WRITE_OUTCOME`; never retry until the value is independently
+checked. Local exclusivity cannot detect another process or engineering tool.
+BOOL and BYTE write/readback/restore were tested on one authorized S7-1200 V4.5;
+USINT has synthetic wire-encoding evidence only. No generic writes, force or downloads are enabled.
 
 <a id="native-parallel-sampling-and-stress-measurement"></a>
 

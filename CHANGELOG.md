@@ -8,6 +8,12 @@
 - Add synthetic-wire-tested native CHAR, WCHAR, DATE and TIME_OF_DAY reads.
 - Fail closed when an area type-reference read is rejected.
 - Add bounded, pull-driven native Plus member polling; this is not PLC push.
+- Add one bounded owned TLS V2 push subscription per session, early-notification
+  routing, explicit finite credit renewal and owned-container cleanup. Initial
+  and renewed credits were observed on one S7-1200 V4.5 lab controller.
+- Add explicitly authorized runtime-discovered DB/M BOOL, BYTE and USINT writes,
+  with unknown-outcome handling and no retries. BOOL and BYTE were read back and
+  restored on the same lab controller; USINT has synthetic wire-encoding evidence only.
 - Replace the classic protocol engine with JavaScript Buffer-based framing and
   keep the previous bridge and loader exports as compatibility aliases.
 - The low-level engine now exposes a fixed ArrayBuffer; callers cannot grow

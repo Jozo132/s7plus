@@ -14,9 +14,11 @@ const policies = Object.freeze({
 export const BLOCK_CONTENT_ATTRIBUTES = Object.freeze([233, 2521, 2580, 2533, 2544, 2546, 2582, 2583]);
 export const ACTIVE_ALARM_ATTRIBUTES = Object.freeze([2670, 2671, 2672, 2673, 2677, 4079, 7813, 233, 7917, 2715]);
 
-/** @param {string} kind @param {{cpuStartAuthorized?:boolean}} [authorization] */
+/** @param {string} kind @param {{cpuStartAuthorized?:boolean,subscriptionAuthorized?:boolean,scalarWriteAuthorized?:boolean}} [authorization] */
 export function getOperationPolicy(kind, authorization = {}) {
   if (Object.hasOwn(policies, kind)) return { classification: policies[/** @type {keyof typeof policies} */ (kind)], allowed: true };
+  if (['subscriptionCreate', 'subscriptionDelete', 'subscriptionCredit'].includes(kind) && authorization.subscriptionAuthorized === true) return { classification: 'OWNED_SUBSCRIPTION', allowed: true };
+  if (kind === 'writeScalar' && authorization.scalarWriteAuthorized === true) return { classification: 'EXPLICIT_PROCESS_WRITE', allowed: true };
   if (kind === 'cpuStart' && authorization.cpuStartAuthorized === true) return { classification: 'HIGH_IMPACT_MODE_CHANGE', allowed: true };
   if (['cpuStop', 'cpuStart', 'cpuControl'].includes(kind)) return { classification: 'HIGH_IMPACT_MODE_CHANGE', allowed: false };
   if (['write', 'download', 'delete', 'force', 'setVariable', 'setSecurity'].includes(kind)) return { classification: 'FORBIDDEN_MODIFICATION', allowed: false };
