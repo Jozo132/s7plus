@@ -31,7 +31,7 @@ function acquisition() {
 }
 
 async function directory() {
-  const result = await mkdtemp(join(tmpdir(), 's7proxy-software-snapshot-'));
+  const result = await mkdtemp(join(tmpdir(), 's7plus-software-snapshot-'));
   directories.push(result);
   return result;
 }

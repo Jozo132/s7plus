@@ -63,7 +63,7 @@ export async function saveAcquisitionEvidence(report, directory = 'backups/produ
     frames.push(await storeContent(content, Buffer.from(entry.hex, 'hex')));
   }
   const manifest = {
-    schema: 's7proxy.acquisition-evidence.v1', createdAt: new Date().toISOString(),
+    schema: 's7plus.acquisition-evidence.v1', createdAt: new Date().toISOString(),
     source: { target: reportValue.target, protocol: reportValue.protocol, identity: reportValue.identity },
     completeness: reportValue.identity?.deviceString ? 'IDENTITY_ONLY' : null,
     status: reportValue.failure ? 'INCOMPLETE' : 'OBSERVATION_ONLY',

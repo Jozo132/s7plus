@@ -31,10 +31,10 @@ const setupGolden = Buffer.from('0000004d010182320100170000013a823b00048400823f0
 export function normalizedReferenceCreate(frame) {
   let result = Buffer.from(frame);
   for (const [prefixHex, reference, own] of [
-    ['a381690015', 's7commplus', 'S7Proxy'],
-    ['a382210015', '1:::6.0::s7commplus', '1:::6.0::S7Proxy'],
-    ['a382280015', 's7commplus', 'S7Proxy'],
-    ['a3822a0015', 's7commplus', 'S7Proxy'],
+    ['a381690015', 's7commplus', 'S7Plus'],
+    ['a382210015', '1:::6.0::s7commplus', '1:::6.0::S7Plus'],
+    ['a382280015', 's7commplus', 'S7Plus'],
+    ['a3822a0015', 's7commplus', 'S7Plus'],
   ]) {
     const prefix = Buffer.from(prefixHex, 'hex');
     const before = Buffer.concat([prefix, Buffer.from([reference.length]), Buffer.from(reference)]);
@@ -75,7 +75,7 @@ export function validateSessionRequest(request, index, secure = false, reference
     assert.equal(objects.length, 2);
     assert.deepEqual(objects.map(entry => [entry.rid, entry.classId, entry.classFlags, entry.attributeId]), [[211, 287, 0, 0], [211, 255, 0, 0]]);
     assert.deepEqual(objects[0].attributes.map(attribute => attribute.id), reference ? [233, 289, 296, 297, 298, 299, 300, 301] : [233, 289, 296, 297, 298, 300, 301]);
-    if (!reference) assert.deepEqual(objects[0].attributes.map(attribute => attribute.value.value), ['S7Proxy', '1:::6.0::S7Proxy', 'S7Proxy', '', 'S7Proxy', 0x80C3C901, '']);
+    if (!reference) assert.deepEqual(objects[0].attributes.map(attribute => attribute.value.value), ['S7Plus', '1:::6.0::S7Plus', 'S7Plus', '', 'S7Plus', 0x80C3C901, '']);
     assert.equal(objects[1].attributes[0].value.value, 'SubscriptionContainer');
     assert.deepEqual(payload.subarray(-4), Buffer.alloc(4));
   }

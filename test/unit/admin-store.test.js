@@ -13,7 +13,7 @@ describe('AdminStore', () => {
   let tmpDir;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 's7proxy-test-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 's7plus-test-'));
     store = new AdminStore(join(tmpDir, 'test.db'));
   });
 

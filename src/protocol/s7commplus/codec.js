@@ -165,8 +165,8 @@ function stringAttribute(id, text) {
 export function createSessionPayload() {
   return Buffer.concat([
     u32(285), Buffer.from([0, 4, 0]), u32(0), Buffer.from([0xA1]), u32(211), vlq(287), Buffer.from([0, 0]),
-    stringAttribute(233, 'S7Proxy'), stringAttribute(289, '1:::6.0::S7Proxy'),
-    stringAttribute(296, 'S7Proxy'), stringAttribute(297, ''), stringAttribute(298, 'S7Proxy'),
+    stringAttribute(233, 'S7Plus'), stringAttribute(289, '1:::6.0::S7Plus'),
+    stringAttribute(296, 'S7Plus'), stringAttribute(297, ''), stringAttribute(298, 'S7Plus'),
     Buffer.from([0xA3]), vlq(300), Buffer.from([0, 18]), u32(0x80C3C901),
     stringAttribute(301, ''), Buffer.from([0xA1]), u32(211), vlq(255), Buffer.from([0, 0]),
     stringAttribute(233, 'SubscriptionContainer'), Buffer.from([0xA2, 0xA2]), u32(0),

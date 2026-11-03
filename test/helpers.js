@@ -21,8 +21,8 @@ let ctx = null;
 
 /** @param {DemoServerOptions} [options] */
 export async function startIntegrationDemoServer(options = {}) {
-  const backend = process.env.S7PROXY_TEST_BACKEND ?? 'compat';
-  if (backend !== 'compat' && backend !== 'native') throw new Error('S7PROXY_TEST_BACKEND must be compat or native');
+  const backend = process.env.S7PLUS_TEST_BACKEND ?? 'compat';
+  if (backend !== 'compat' && backend !== 'native') throw new Error('S7PLUS_TEST_BACKEND must be compat or native');
   return startDemoServer({ backend, ...options, silent: true });
 }
 

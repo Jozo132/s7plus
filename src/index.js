@@ -31,10 +31,10 @@ if (process.stdout.isTTY && config.logging.pretty === undefined) {
   config.logging.pretty = true;
 }
 
-// Initialize JSON persistence. For compatibility, S7PROXY_DB_PATH may still
+// Initialize JSON persistence. For compatibility, S7PLUS_DB_PATH may still
 // point at a legacy .db-style path; AdminStore will persist a .json file
 // alongside it.
-const dbPath = process.env['S7PROXY_DB_PATH'] ?? resolve('data', 's7proxy.json');
+const dbPath = process.env['S7PLUS_DB_PATH'] ?? resolve('data', 's7plus.json');
 const store = new AdminStore(dbPath);
 
 // Merge config and persisted targets, honoring database overrides and disabled IDs.

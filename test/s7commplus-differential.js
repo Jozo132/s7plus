@@ -9,8 +9,8 @@ import { createHash, X509Certificate } from 'node:crypto';
 import { fixture, REFERENCE_CREATE_OBJECT, normalizedReferenceCreate, encodeTestUInt64 } from './s7commplus-fixture.js';
 import { S7CommPlusClient } from '../src/client/s7commplus-client.js';
 
-const python = process.env.S7PROXY_REFERENCE_PYTHON;
-if (!python) throw new Error('Set S7PROXY_REFERENCE_PYTHON to an isolated interpreter containing pinned s7commplus 245350ea0ca6327234e5032e781a99782334bc8f');
+const python = process.env.S7PLUS_REFERENCE_PYTHON;
+if (!python) throw new Error('Set S7PLUS_REFERENCE_PYTHON to an isolated interpreter containing pinned s7commplus 245350ea0ca6327234e5032e781a99782334bc8f');
 const execute = promisify(execFile);
 const referenceCode = `
 import json, logging, sys

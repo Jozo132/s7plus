@@ -15,7 +15,7 @@ let baseUrl;
 
 describe('HttpApp', () => {
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 's7proxy-http-app-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 's7plus-http-app-'));
     writeFileSync(join(tmpDir, 'index.html'), '<html><body>admin</body></html>', 'utf8');
 
     app = createHttpApp();

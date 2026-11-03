@@ -3,7 +3,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 
-/** @import { S7ProxyConfig, FailoverConfig, DaqConfig, WebApiConfig } from './protocol/types.js' */
+/** @import { S7PlusConfig, FailoverConfig, DaqConfig, WebApiConfig } from './protocol/types.js' */
 /** @import { CliOverrides } from './cli-options.js' */
 
 /**
@@ -65,7 +65,7 @@ const DEFAULT_WEBAPI = {
   rateLimit: { max: 100, windowMs: 60000 },
 };
 
-/** @type {S7ProxyConfig} */
+/** @type {S7PlusConfig} */
 const DEFAULT_CONFIG = {
   listen: { ip: '0.0.0.0', port: 102 },
   targets: [],
@@ -81,12 +81,12 @@ const DEFAULT_CONFIG = {
 /**
  * @param {string} [configPath]
  * @param {CliOverrides} [overrides]
- * @returns {S7ProxyConfig}
+ * @returns {S7PlusConfig}
  */
 export function loadConfig(configPath, overrides = {}) {
-  const path = configPath ?? process.env['S7PROXY_CONFIG'] ?? 'config/default.json';
+  const path = configPath ?? process.env['S7PLUS_CONFIG'] ?? 'config/default.json';
 
-  /** @type {Partial<S7ProxyConfig>} */
+  /** @type {Partial<S7PlusConfig>} */
   let fileConfig = {};
   /** @type {Record<string, string>} */
   let fileEnv = {};
@@ -104,13 +104,13 @@ export function loadConfig(configPath, overrides = {}) {
 
   // Environment variable overrides
   const env = { ...fileEnv, ...process.env };
-  const envPort = env['S7PROXY_PORT'];
-  const envIp = env['S7PROXY_IP'];
-  const envLogLevel = env['S7PROXY_LOG_LEVEL'];
-  const envWebHost = env['S7PROXY_WEB_HOST'];
-  const envWebPort = env['S7PROXY_WEB_PORT'];
+  const envPort = env['S7PLUS_PORT'];
+  const envIp = env['S7PLUS_IP'];
+  const envLogLevel = env['S7PLUS_LOG_LEVEL'];
+  const envWebHost = env['S7PLUS_WEB_HOST'];
+  const envWebPort = env['S7PLUS_WEB_PORT'];
 
-  /** @type {S7ProxyConfig} */
+  /** @type {S7PlusConfig} */
   const config = {
     ...DEFAULT_CONFIG,
     ...fileConfig,

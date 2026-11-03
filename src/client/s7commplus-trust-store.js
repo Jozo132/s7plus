@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { PlusError } from '../protocol/s7commplus/codec.js';
 
 /** @param {Buffer} certificate @param {string} host @param {number} port @param {string} peerName @param {string} [directory] @param {boolean} [allowChangedCertificate] */
-export async function enrollCertificate(certificate, host, port, peerName, directory = join(tmpdir(), 's7proxy', 'certificates'), allowChangedCertificate = false) {
+export async function enrollCertificate(certificate, host, port, peerName, directory = join(tmpdir(), 's7plus', 'certificates'), allowChangedCertificate = false) {
   const parsed = new X509Certificate(certificate);
   const now = Date.now();
   if (now < Date.parse(parsed.validFrom) || now > Date.parse(parsed.validTo)) {

@@ -17,7 +17,7 @@
  *   getPool: () => ConnectionPool | null,
  *   getDaq: () => DaqEngine | null,
  *   metrics: Metrics,
- *   config: import('../protocol/types.js').S7ProxyConfig,
+ *   config: import('../protocol/types.js').S7PlusConfig,
  *   uptime: () => number,
  *   upsertTarget?: (target: import('../protocol/types.js').PlcTarget) => Promise<any>,
  *   removeTarget?: (targetId: string) => Promise<any>,

@@ -69,7 +69,7 @@ export async function saveSoftwareSnapshot(acquisition, directory = 'backups') {
   }
   const inventoryEvidence = await put(Buffer.from(portableJSON(acquisition.inventory.evidence)));
   const manifest = {
-    schema: 's7proxy.software-snapshot.v1', captureId: randomUUID(), createdAt: new Date().toISOString(),
+    schema: 's7plus.software-snapshot.v1', captureId: randomUUID(), createdAt: new Date().toISOString(),
     artifactClass: 'SOFTWARE_UPLOAD', source: acquisition.source, status: acquisition.status,
     controller: acquisition.controller, cpuState: acquisition.cpuState,
     inventory: { blocks: acquisition.inventory.blocks, otherObjects: acquisition.inventory.otherObjects,
@@ -92,7 +92,7 @@ export async function verifySoftwareSnapshot(manifestPath) {
   if (basename(dirname(path)) !== 'manifests') throw new PlusError('ARGUMENT', 'Select a software snapshot in its manifests directory');
   const bytes = await readBounded(path, MAX_MANIFEST_BYTES);
   const manifest = JSON.parse(bytes.toString('utf8'));
-  if (manifest?.schema !== 's7proxy.software-snapshot.v1' || manifest.artifactClass !== 'SOFTWARE_UPLOAD'
+  if (manifest?.schema !== 's7plus.software-snapshot.v1' || manifest.artifactClass !== 'SOFTWARE_UPLOAD'
     || manifest.restorable !== false || !Array.isArray(manifest.objects) || !Array.isArray(manifest.blocks)
     || !manifest.objects.length || manifest.objects.length > 32768 || manifest.blocks.length > 128
     || !['AVAILABLE_COMPONENTS_CAPTURED', 'PARTIAL', 'UNAVAILABLE'].includes(manifest.status)

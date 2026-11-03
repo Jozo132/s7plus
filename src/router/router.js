@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 
 /** @import { ClientSession } from '../server/client-session.js' */
 /** @import { ConnectionPool } from '../client/connection-pool.js' */
-/** @import { RoutingRule, FilterRule, S7ProxyConfig, PlcTarget, ParsedPDU } from '../protocol/types.js' */
+/** @import { RoutingRule, FilterRule, S7PlusConfig, PlcTarget, ParsedPDU } from '../protocol/types.js' */
 /** @import { Metrics } from '../metrics/metrics.js' */
 /** @import { Logger } from '../logging/logger.js' */
 
@@ -25,7 +25,7 @@ export class ProxyRouter extends EventEmitter {
 
   /**
    * @param {ConnectionPool} pool
-   * @param {S7ProxyConfig} config
+   * @param {S7PlusConfig} config
    * @param {Logger} logger
    * @param {Metrics} metrics
    */

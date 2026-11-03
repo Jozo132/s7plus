@@ -4,10 +4,10 @@
 //
 // Demonstrates five approaches, executed 5 seconds apart:
 //   1. node-snap7 native client
-//   2. S7Proxy compatibility layer  (S7Client)
-//   3. S7Proxy native mode          (PlcConnection + ClassicBridge)
-//   4. S7Proxy child process + Admin HTTP      (admin REST write/read)
-//   5. S7Proxy child process + Admin WebSocket (admin WS write/read)
+//   2. S7Plus compatibility layer  (S7Client)
+//   3. S7Plus native mode          (PlcConnection + ClassicBridge)
+//   4. S7Plus child process + Admin HTTP      (admin REST write/read)
+//   5. S7Plus child process + Admin WebSocket (admin WS write/read)
 //
 // Each approach:
 //   - reads the current INT value
@@ -51,7 +51,7 @@ const WORD_AMOUNT = 1;
 
 const DELAY_MS = 5000;
 
-// S7Proxy web/admin API settings
+// S7Plus web/admin API settings
 const WEB_PORT = 18081;
 const BASE_URL = `http://localhost:${WEB_PORT}`;
 const ADMIN_API_BASE = `${BASE_URL}/admin/api`;
@@ -241,7 +241,7 @@ async function writeWithSnap7() {
   }
 }
 
-// ---- 2. S7Proxy compatibility layer ---------------------------------------
+// ---- 2. S7Plus compatibility layer ---------------------------------------
 
 async function writeWithCompat() {
   const client = new S7Client();
@@ -256,7 +256,7 @@ async function writeWithCompat() {
 
   try {
     await runWriteCycle(
-      '2/5  S7Proxy compat (S7Client write/read-back)',
+      '2/5  S7Plus compat (S7Client write/read-back)',
       async () => {
         const buf = await new Promise((resolve, reject) => {
           client.DBRead(DB_NUMBER, BYTE_OFFSET, READ_BYTES, (/** @type {number} */ err, data) => {
@@ -286,7 +286,7 @@ async function writeWithCompat() {
   }
 }
 
-// ---- 3. S7Proxy native mode -----------------------------------------------
+// ---- 3. S7Plus native mode -----------------------------------------------
 
 async function writeWithNative() {
   const logger = createLogger({ level: 'silent' });
@@ -304,7 +304,7 @@ async function writeWithNative() {
 
   try {
     await runWriteCycle(
-      '3/5  S7Proxy native (PlcConnection + ClassicBridge)',
+      '3/5  S7Plus native (PlcConnection + ClassicBridge)',
       async () => {
         const frame = bridge.buildReadRequest(S7AreaDB, DB_NUMBER, BYTE_OFFSET, WORD_AMOUNT, S7WLWord);
         console.log(`  [debug] native read request: ${hex(frame)}`);
@@ -330,7 +330,7 @@ async function writeWithNative() {
   }
 }
 
-// ---- 4/5. S7Proxy child-process helpers -----------------------------------
+// ---- 4/5. S7Plus child-process helpers -----------------------------------
 
 /**
  * @typedef {Object} ProxyRuntime
@@ -349,12 +349,12 @@ async function getFs() {
 }
 
 /** @returns {Promise<ProxyRuntime>} */
-async function startS7Proxy() {
+async function startS7Plus() {
   const fs = await getFs();
   const os = await import('node:os');
   const path = await import('node:path');
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 's7proxy-sample2-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 's7plus-sample2-'));
   const cfgPath = path.join(tmpDir, 'config.json');
   const dbPath = path.join(tmpDir, 'sample2.db');
 
@@ -377,13 +377,13 @@ async function startS7Proxy() {
   const projectRoot = resolve(__dirname, '..', '..', '..');
   const entryPoint = resolve(projectRoot, 'src', 'index.js');
 
-  console.log('  Spawning S7Proxy child process ...');
+  console.log('  Spawning S7Plus child process ...');
   const child = fork(entryPoint, [cfgPath], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     cwd: projectRoot,
     env: {
       ...process.env,
-      S7PROXY_DB_PATH: dbPath,
+      S7PLUS_DB_PATH: dbPath,
     },
   });
 
@@ -402,7 +402,7 @@ async function startS7Proxy() {
     try {
       const res = await fetch(`${BASE_URL}/api/health`);
       if (res.ok) {
-        console.log('  S7Proxy is ready');
+        console.log('  S7Plus is ready');
         return { child, tmpDir, dbPath, token: undefined };
       }
     } catch {
@@ -412,11 +412,11 @@ async function startS7Proxy() {
   }
 
   child.kill();
-  throw new Error('S7Proxy did not become ready within 15 s');
+  throw new Error('S7Plus did not become ready within 15 s');
 }
 
 /** @param {ProxyRuntime} runtime */
-async function stopS7Proxy(runtime) {
+async function stopS7Plus(runtime) {
   const fs = await getFs();
 
   if (runtime.child.exitCode === null) {
@@ -425,7 +425,7 @@ async function stopS7Proxy(runtime) {
   }
 
   fs.rmSync(runtime.tmpDir, { recursive: true, force: true });
-  console.log('  S7Proxy child process stopped');
+  console.log('  S7Plus child process stopped');
 }
 
 /** @param {ProxyRuntime} runtime @returns {Promise<string>} */
@@ -493,7 +493,7 @@ async function readWithAdminRest(runtime) {
   await ensureWriteStruct(runtime);
 
   await runWriteCycle(
-    '4/5  S7Proxy child process + Admin HTTP',
+    '4/5  S7Plus child process + Admin HTTP',
     async () => {
       console.log(`  [debug] POST ${ADMIN_API_BASE}/structs/${STRUCT_NAME}/read`);
       const { res, body } = await adminFetch(runtime, `/structs/${encodeURIComponent(STRUCT_NAME)}/read`, {
@@ -608,7 +608,7 @@ async function writeWithAdminWs(runtime) {
 
   try {
     await runWriteCycle(
-      '5/5  S7Proxy child process + Admin WebSocket',
+      '5/5  S7Plus child process + Admin WebSocket',
       async () => {
         const msg = await adminWs.request(
           { type: 'read-struct', name: STRUCT_NAME, keys: [STRUCT_FIELD] },
@@ -666,7 +666,7 @@ async function main() {
   /** @type {ProxyRuntime | undefined} */
   let runtime;
   try {
-    runtime = await startS7Proxy();
+    runtime = await startS7Plus();
 
     try {
       await readWithAdminRest(runtime);
@@ -683,9 +683,9 @@ async function main() {
       console.error('  x Admin WebSocket failed:', /** @type {Error} */ (err).message);
     }
   } catch (err) {
-    console.error('  x S7Proxy child process failed:', /** @type {Error} */ (err).message);
+    console.error('  x S7Plus child process failed:', /** @type {Error} */ (err).message);
   } finally {
-    if (runtime) await stopS7Proxy(runtime);
+    if (runtime) await stopS7Plus(runtime);
   }
 
   console.log('\nDone');

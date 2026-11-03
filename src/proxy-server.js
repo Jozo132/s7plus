@@ -18,13 +18,13 @@ import { registerAdminRoutes } from './admin/routes.js';
 import { AdminAuth } from './admin/auth.js';
 import { AdminWsServer } from './admin/admin-ws.js';
 
-/** @import { S7ProxyConfig, PlcTarget } from './protocol/types.js' */
+/** @import { S7PlusConfig, PlcTarget } from './protocol/types.js' */
 /** @import { S7StructDef, S7Value } from './protocol/db-struct.js' */
 /** @import { AdminStore } from './admin/store.js' */
 /** @import { Logger } from './logging/logger.js' */
 
 export class ProxyServer {
-  /** @type {S7ProxyConfig} */
+  /** @type {S7PlusConfig} */
   #config;
   /** @type {Logger} */
   #logger;
@@ -72,7 +72,7 @@ export class ProxyServer {
   #sigtermHandler = null;
 
   /**
-   * @param {S7ProxyConfig} config
+   * @param {S7PlusConfig} config
    * @param {AdminStore} [adminStore]
    */
   constructor(config, adminStore) {

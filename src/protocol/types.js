@@ -1,5 +1,5 @@
 // @ts-check
-// Core types shared across the S7Proxy Node.js layer
+// Core types shared across the S7Plus Node.js layer
 // This file contains only JSDoc type definitions — no runtime code.
 
 // ─── PLC Endpoint & Target ───
@@ -185,7 +185,7 @@
  */
 
 /**
- * @typedef {Object} S7ProxyConfig
+ * @typedef {Object} S7PlusConfig
  * @property {{ ip: string; port: number; mode?: 'classic' | 'passthrough' }} listen
  * @property {PlcTarget[]} targets
  * @property {RoutingRule[]} routing

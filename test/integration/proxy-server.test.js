@@ -34,7 +34,7 @@ describe('ProxyServer (smoke)', () => {
     expect(db1[1]).toBe(0xCD);
     expect(db1.readUInt16BE(2)).toBe(0x1234);
     expect(db1.readInt32BE(4)).toBe(42);
-    expect(db1.toString('ascii', 12, 20)).toBe('S7Proxy!');
+    expect(db1.toString('ascii', 12, 20)).toBe('S7Plus!!');
   });
 
   it('DB2 buffer should contain the ramp pattern', () => {

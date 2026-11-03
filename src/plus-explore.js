@@ -23,7 +23,7 @@ if (!options?.live || Boolean(options.tls) === Boolean(options.legacy) || (optio
   const minVersion = options['tls-min-version'];
   if (minVersion !== undefined && minVersion !== 'TLSv1.2' && minVersion !== 'TLSv1.3') throw new Error('TLS minimum version must be TLSv1.2 or TLSv1.3');
   const labHost = labMode ? getLabHost() : undefined;
-  if (labMode && !labHost) throw new Error('S7PROXY_LAB_HOST must identify the explicitly authorized lab PLC');
+  if (labMode && !labHost) throw new Error('S7PLUS_LAB_HOST must identify the explicitly authorized lab PLC');
   if (tlsMode && !allowAnyCertificate && !process.env.S7PLUS_TLS_CA) throw new Error('S7PLUS_TLS_CA must name the authorized PLC CA certificate');
   if (tlsMode && !allowAnyCertificate && !/^[a-fA-F0-9]{64}$/.test(process.env.S7PLUS_TLS_CERT_SHA256 ?? '')) throw new Error('S7PLUS_TLS_CERT_SHA256 must contain the independently approved certificate pin');
   if (allowAnyCertificate) console.error('WARNING: TLS certificate verification is disabled; the PLC identity is not authenticated.');
@@ -38,7 +38,7 @@ if (!options?.live || Boolean(options.tls) === Boolean(options.legacy) || (optio
     const observation = client.report;
     await client.disconnect();
     const report = { startedAt, finishedAt: new Date().toISOString(), ...observation, targetKind: options.host ? 'CONFIGURED' : labMode ? 'LAB' : 'PRODUCTION',
-      disconnected: !client.connected, referenceProject: process.env.S7PROXY_REFERENCE_PROJECT ?? null,
+      disconnected: !client.connected, referenceProject: process.env.S7PLUS_REFERENCE_PROJECT ?? null,
       offlineComparison: { status: 'REFERENCE_NOT_AVAILABLE', exactRevisionMatch: null },
       blockUpload: { status: 'NOT_ATTEMPTED_UNQUALIFIED', attempts: [], totalBytes: 0 },
       nextStep: observation.failure ? 'Resolve the recorded failure without escalating traffic or changing PLC settings' : 'Review identity and health evidence before authorizing a small explicit object query',

@@ -46,9 +46,6 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 npm install s7plus
 ```
 
-The local source is prepared as **0.5.0**; `s7plus` has not yet been published.
-The previously published package is `s7proxy` 0.4.8. The `s7proxy` CLI remains
-an alias, and existing `S7PROXY_*` configuration variables remain supported.
 See [the changelog](CHANGELOG.md) and [feature comparison](docs/FEATURE_COMPARISON.md).
 
 Requires Node.js >= 20.
@@ -267,7 +264,7 @@ This JSON configures the TCP listener and classic services. `listen.mode` accept
 The native client's TLS settings and budgets are passed separately to
 `S7CommPlusClient` or the explicit native CLI commands below, not to the tunnel.
 
-Configuration is loaded from JSON. For simple deployments, `S7PROXY_CONFIG` can also point at a `.env` file that sets scalar overrides like ports and log level.
+Configuration is loaded from JSON. For simple deployments, `S7PLUS_CONFIG` can also point at a `.env` file that sets scalar overrides like ports and log level.
 
 CLI flags can override both environment variables and config file values:
 
@@ -325,12 +322,12 @@ Options:
 
 | Variable | Overrides |
 |----------|-----------|
-| `S7PROXY_CONFIG` | Config file path |
-| `S7PROXY_PORT` | `listen.port` |
-| `S7PROXY_IP` | `listen.ip` |
-| `S7PROXY_LOG_LEVEL` | `logging.level` |
-| `S7PROXY_WEB_HOST` | `webApi.host` |
-| `S7PROXY_WEB_PORT` | `webApi.port` |
+| `S7PLUS_CONFIG` | Config file path |
+| `S7PLUS_PORT` | `listen.port` |
+| `S7PLUS_IP` | `listen.ip` |
+| `S7PLUS_LOG_LEVEL` | `logging.level` |
+| `S7PLUS_WEB_HOST` | `webApi.host` |
+| `S7PLUS_WEB_PORT` | `webApi.port` |
 
 <a id="native-read-only-s7commplus-foundation"></a>
 
@@ -369,8 +366,10 @@ without providing native decoding, acquisition or a public subscription API.
 
 ### Security And Sessions
 
-For the production target, only the isolated read-only backend
-is permitted; the classic/raw backend rejects this IP. Other classic endpoints
+Configure the production target using `S7PLUS_PRODUCTION_HOST` or
+`S7PLUS_TARGET_CONFIG`. Without this configuration the production-host restriction
+cannot identify that target. For the configured production target, only the isolated
+read-only backend is permitted; the classic/raw backend rejects this IP. Other classic endpoints
 retain read/write behavior. No acquisition runs on import or normal server startup.
 
 The explicit `node src/plus-explore.js --live --legacy` command selects the
@@ -398,7 +397,7 @@ key does not independently authenticate the target's identity. Reports label it
 is performed. The legacy cryptographic compatibility code is experimental and
 has not undergone an independent security audit or constant-time review.
 
-For a separately authorized lab target, configure `S7PROXY_LAB_HOST` separately
+For a separately authorized lab target, configure `S7PLUS_LAB_HOST` separately
 from the production target and select `--lab --legacy` or `--lab --tls` explicitly.
 Establish that PLC's TCP/102 security profile independently before any attempt.
 TLS additionally requires `S7PLUS_TLS_CA`, `S7PLUS_TLS_CERT_SHA256` (64 hex digits
@@ -421,7 +420,7 @@ const client = new S7CommPlusClient({
 ```
 
 `trustOnFirstUse` accepts unseen certificates with a `console.warn` and stores
-them under `join(tmpdir(), 's7proxy', 'certificates')` unless `tls.trustStoreDir`
+them under `join(tmpdir(), 's7plus', 'certificates')` unless `tls.trustStoreDir`
 is provided. Known certificates reconnect without a warning. A changed certificate
 is rejected by default; `tls.allowChangedCertificate: true` warns with the old and
 new SHA-256 fingerprints and replaces the stored certificate before continuing.
@@ -939,7 +938,7 @@ equipment shutdown/readiness procedures.
 Siemens distinguishes RUN-capable software/hardware uploads from the STOP-only
 consistent online-device backup in its
 [backup options documentation](https://docs.tia.siemens.cloud/r/en-us/v20/creating-a-backup-of-an-s7-cpu/backup-options-for-s7-cpus).
-That product documentation does not qualify S7Proxy's missing backup operations.
+That product documentation does not qualify S7Plus's missing backup operations.
 
 ### Explicit CPU Start
 

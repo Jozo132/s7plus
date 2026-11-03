@@ -318,42 +318,42 @@ export class Metrics {
   constructor() {
     this.registry = new MetricsRegistry();
 
-    this.clientConnectionsActive = this.registry.register(new GaugeMetric('s7proxy_client_connections_active', 'Number of active S7 client connections'));
-    this.clientConnectionsTotal = this.registry.register(new CounterMetric('s7proxy_client_connections_total', 'Total S7 client connections'));
-    this.plcConnectionsActive = this.registry.register(new GaugeMetric('s7proxy_plc_connections_active', 'Active persistent PLC connections', ['target']));
-    this.plcConnectionReconnects = this.registry.register(new CounterMetric('s7proxy_plc_connection_reconnects_total', 'PLC connection reconnect attempts', ['target']));
+    this.clientConnectionsActive = this.registry.register(new GaugeMetric('s7plus_client_connections_active', 'Number of active S7 client connections'));
+    this.clientConnectionsTotal = this.registry.register(new CounterMetric('s7plus_client_connections_total', 'Total S7 client connections'));
+    this.plcConnectionsActive = this.registry.register(new GaugeMetric('s7plus_plc_connections_active', 'Active persistent PLC connections', ['target']));
+    this.plcConnectionReconnects = this.registry.register(new CounterMetric('s7plus_plc_connection_reconnects_total', 'PLC connection reconnect attempts', ['target']));
 
-    this.pdusIn = this.registry.register(new CounterMetric('s7proxy_pdus_in_total', 'Total PDUs received', ['direction']));
-    this.pdusOut = this.registry.register(new CounterMetric('s7proxy_pdus_out_total', 'Total PDUs sent', ['direction']));
-    this.pduLatency = this.registry.register(new HistogramMetric('s7proxy_pdu_latency_ms', 'PDU round-trip latency in milliseconds', ['target'], [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]));
+    this.pdusIn = this.registry.register(new CounterMetric('s7plus_pdus_in_total', 'Total PDUs received', ['direction']));
+    this.pdusOut = this.registry.register(new CounterMetric('s7plus_pdus_out_total', 'Total PDUs sent', ['direction']));
+    this.pduLatency = this.registry.register(new HistogramMetric('s7plus_pdu_latency_ms', 'PDU round-trip latency in milliseconds', ['target'], [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]));
 
-    this.failoverTotal = this.registry.register(new CounterMetric('s7proxy_failover_total', 'Total failover events', ['target', 'direction']));
-    this.healthProbeResult = this.registry.register(new GaugeMetric('s7proxy_health_probe_result', 'Health probe result (1=healthy, 0=unhealthy)', ['target', 'endpoint']));
-    this.activeEndpoint = this.registry.register(new GaugeMetric('s7proxy_active_endpoint', 'Active endpoint index (0=primary, 1+=backup)', ['target']));
+    this.failoverTotal = this.registry.register(new CounterMetric('s7plus_failover_total', 'Total failover events', ['target', 'direction']));
+    this.healthProbeResult = this.registry.register(new GaugeMetric('s7plus_health_probe_result', 'Health probe result (1=healthy, 0=unhealthy)', ['target', 'endpoint']));
+    this.activeEndpoint = this.registry.register(new GaugeMetric('s7plus_active_endpoint', 'Active endpoint index (0=primary, 1+=backup)', ['target']));
 
-    this.priorityQueueSize = this.registry.register(new GaugeMetric('s7proxy_priority_queue_size', 'Current priority queue size', ['target', 'priority']));
-    this.priorityQueueWait = this.registry.register(new HistogramMetric('s7proxy_priority_queue_wait_ms', 'Time requests wait in priority queue', ['target', 'priority'], [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000]));
-    this.priorityQueueAgedPromotions = this.registry.register(new CounterMetric('s7proxy_priority_queue_aged_promotions_total', 'Requests promoted due to aging', ['target']));
+    this.priorityQueueSize = this.registry.register(new GaugeMetric('s7plus_priority_queue_size', 'Current priority queue size', ['target', 'priority']));
+    this.priorityQueueWait = this.registry.register(new HistogramMetric('s7plus_priority_queue_wait_ms', 'Time requests wait in priority queue', ['target', 'priority'], [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000]));
+    this.priorityQueueAgedPromotions = this.registry.register(new CounterMetric('s7plus_priority_queue_aged_promotions_total', 'Requests promoted due to aging', ['target']));
 
-    this.daqScanDuration = this.registry.register(new HistogramMetric('s7proxy_daq_scan_duration_ms', 'DAQ scan cycle duration', ['target', 'group'], [1, 5, 10, 25, 50, 100, 250, 500]));
-    this.daqScanTotal = this.registry.register(new CounterMetric('s7proxy_daq_scan_total', 'Total DAQ scans executed', ['target', 'group']));
-    this.daqMissedScans = this.registry.register(new CounterMetric('s7proxy_daq_missed_scans', 'DAQ scans that missed their deadline', ['target', 'group']));
-    this.daqActiveScanGroups = this.registry.register(new GaugeMetric('s7proxy_daq_active_scan_groups', 'Active scan groups', ['target']));
-    this.daqActiveSubscriptions = this.registry.register(new GaugeMetric('s7proxy_daq_active_subscriptions', 'Active DAQ subscriptions'));
-    this.daqTagsTotal = this.registry.register(new GaugeMetric('s7proxy_daq_tags_total', 'Total subscribed tags (before dedup)', ['target']));
-    this.daqTagsUnique = this.registry.register(new GaugeMetric('s7proxy_daq_tags_unique', 'Unique tags after dedup', ['target']));
-    this.daqCoalescedReads = this.registry.register(new CounterMetric('s7proxy_daq_coalesced_reads', 'Number of coalesced read operations', ['target']));
+    this.daqScanDuration = this.registry.register(new HistogramMetric('s7plus_daq_scan_duration_ms', 'DAQ scan cycle duration', ['target', 'group'], [1, 5, 10, 25, 50, 100, 250, 500]));
+    this.daqScanTotal = this.registry.register(new CounterMetric('s7plus_daq_scan_total', 'Total DAQ scans executed', ['target', 'group']));
+    this.daqMissedScans = this.registry.register(new CounterMetric('s7plus_daq_missed_scans', 'DAQ scans that missed their deadline', ['target', 'group']));
+    this.daqActiveScanGroups = this.registry.register(new GaugeMetric('s7plus_daq_active_scan_groups', 'Active scan groups', ['target']));
+    this.daqActiveSubscriptions = this.registry.register(new GaugeMetric('s7plus_daq_active_subscriptions', 'Active DAQ subscriptions'));
+    this.daqTagsTotal = this.registry.register(new GaugeMetric('s7plus_daq_tags_total', 'Total subscribed tags (before dedup)', ['target']));
+    this.daqTagsUnique = this.registry.register(new GaugeMetric('s7plus_daq_tags_unique', 'Unique tags after dedup', ['target']));
+    this.daqCoalescedReads = this.registry.register(new CounterMetric('s7plus_daq_coalesced_reads', 'Number of coalesced read operations', ['target']));
 
-    this.restRequestsTotal = this.registry.register(new CounterMetric('s7proxy_rest_requests_total', 'REST API requests', ['target', 'method']));
-    this.restCacheHits = this.registry.register(new CounterMetric('s7proxy_rest_cache_hits_total', 'REST requests served from cache', ['target']));
-    this.restLatency = this.registry.register(new HistogramMetric('s7proxy_rest_latency_ms', 'REST request latency', ['target'], [1, 5, 10, 25, 50, 100, 250, 500, 1000]));
+    this.restRequestsTotal = this.registry.register(new CounterMetric('s7plus_rest_requests_total', 'REST API requests', ['target', 'method']));
+    this.restCacheHits = this.registry.register(new CounterMetric('s7plus_rest_cache_hits_total', 'REST requests served from cache', ['target']));
+    this.restLatency = this.registry.register(new HistogramMetric('s7plus_rest_latency_ms', 'REST request latency', ['target'], [1, 5, 10, 25, 50, 100, 250, 500, 1000]));
 
-    this.wsClientsActive = this.registry.register(new GaugeMetric('s7proxy_ws_clients_active', 'Active WebSocket DAQ clients'));
-    this.wsDroppedFrames = this.registry.register(new CounterMetric('s7proxy_ws_dropped_frames_total', 'Frames dropped due to slow consumer', ['client']));
-    this.wsSlowConsumerDisconnects = this.registry.register(new CounterMetric('s7proxy_ws_disconnects_slow_consumer_total', 'Clients disconnected for being too slow'));
+    this.wsClientsActive = this.registry.register(new GaugeMetric('s7plus_ws_clients_active', 'Active WebSocket DAQ clients'));
+    this.wsDroppedFrames = this.registry.register(new CounterMetric('s7plus_ws_dropped_frames_total', 'Frames dropped due to slow consumer', ['client']));
+    this.wsSlowConsumerDisconnects = this.registry.register(new CounterMetric('s7plus_ws_disconnects_slow_consumer_total', 'Clients disconnected for being too slow'));
 
-    this.plcAmqSlotsFree = this.registry.register(new GaugeMetric('s7proxy_plc_amq_slots_free', 'Free AMQ slots on PLC connection', ['target', 'conn']));
-    this.plcAmqSlotsTotal = this.registry.register(new GaugeMetric('s7proxy_plc_amq_slots_total', 'Total AMQ slots on PLC connection', ['target', 'conn']));
-    this.plcConnectionUptime = this.registry.register(new GaugeMetric('s7proxy_plc_connection_uptime_ms', 'PLC connection uptime in milliseconds', ['target', 'conn']));
+    this.plcAmqSlotsFree = this.registry.register(new GaugeMetric('s7plus_plc_amq_slots_free', 'Free AMQ slots on PLC connection', ['target', 'conn']));
+    this.plcAmqSlotsTotal = this.registry.register(new GaugeMetric('s7plus_plc_amq_slots_total', 'Total AMQ slots on PLC connection', ['target', 'conn']));
+    this.plcConnectionUptime = this.registry.register(new GaugeMetric('s7plus_plc_connection_uptime_ms', 'PLC connection uptime in milliseconds', ['target', 'conn']));
   }
 }

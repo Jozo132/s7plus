@@ -4,12 +4,12 @@
 //
 // Demonstrates five approaches, executed 5 seconds apart:
 //   1. node-snap7 native client
-//   2. S7Proxy compatibility layer  (S7Client — drop-in snap7 replacement)
-//   3. S7Proxy native mode          (PlcConnection + ClassicBridge)
-//   4. S7Proxy child process + HTTP FETCH   (REST API)
-//   5. S7Proxy child process + WebSocket    (real-time push)
+//   2. S7Plus compatibility layer  (S7Client — drop-in snap7 replacement)
+//   3. S7Plus native mode          (PlcConnection + ClassicBridge)
+//   4. S7Plus child process + HTTP FETCH   (REST API)
+//   5. S7Plus child process + WebSocket    (real-time push)
 //
-// Approaches 4 & 5 share a single S7Proxy child process.
+// Approaches 4 & 5 share a single S7Plus child process.
 //
 // PLC config (to be verified):
 //   IP:   supplied as the first command-line argument
@@ -42,7 +42,7 @@ const READ_BYTES   = 2;   // INT = 2 bytes
 
 const DELAY_MS = 5000;
 
-// S7Proxy web API (used by approaches 4 & 5)
+// S7Plus web API (used by approaches 4 & 5)
 const WEB_PORT = 18080;
 const BASE_URL = `http://localhost:${WEB_PORT}`;
 const WS_URL   = `ws://localhost:${WEB_PORT}/ws`;
@@ -96,10 +96,10 @@ async function readWithSnap7() {
   console.log('  Disconnected');
 }
 
-// ─── 2. S7Proxy compatibility layer ─────────────────────────────────────────
+// ─── 2. S7Plus compatibility layer ─────────────────────────────────────────
 
 async function readWithCompat() {
-  console.log('\n═══ 2/5  S7Proxy compat (S7Client) ═══');
+  console.log('\n═══ 2/5  S7Plus compat (S7Client) ═══');
 
   const client = new S7Client();
 
@@ -121,10 +121,10 @@ async function readWithCompat() {
   console.log('  Disconnected');
 }
 
-// ─── 3. S7Proxy native mode ─────────────────────────────────────────────────
+// ─── 3. S7Plus native mode ─────────────────────────────────────────────────
 
 async function readWithNative() {
-  console.log('\n═══ 3/5  S7Proxy native (PlcConnection + ClassicBridge) ═══');
+  console.log('\n═══ 3/5  S7Plus native (PlcConnection + ClassicBridge) ═══');
 
   const logger = createLogger({ level: 'silent' });
   const engine = await loadClassicEngine();
@@ -160,13 +160,13 @@ async function readWithNative() {
   console.log('  Disconnected');
 }
 
-// ─── 4. S7Proxy child-process + HTTP FETCH ──────────────────────────────────
+// ─── 4. S7Plus child-process + HTTP FETCH ──────────────────────────────────
 
 /**
  * @param {import('node:child_process').ChildProcess} _proc  (kept alive externally)
  */
 async function readWithFetch(_proc) {
-  console.log(`\n═══ 4/5  S7Proxy child process + FETCH ═══`);
+  console.log(`\n═══ 4/5  S7Plus child process + FETCH ═══`);
 
   // Step 1 — create a subscription so the DAQ engine starts polling the tag
   const subRes = await fetch(`${BASE_URL}/api/subscriptions`, {
@@ -197,13 +197,13 @@ async function readWithFetch(_proc) {
   console.log('  Subscription removed');
 }
 
-// ─── 5. S7Proxy child-process + WebSocket ────────────────────────────────────
+// ─── 5. S7Plus child-process + WebSocket ────────────────────────────────────
 
 /**
  * @param {import('node:child_process').ChildProcess} _proc  (kept alive externally)
  */
 async function readWithWebSocket(_proc) {
-  console.log(`\n═══ 5/5  S7Proxy child process + WebSocket ═══`);
+  console.log(`\n═══ 5/5  S7Plus child process + WebSocket ═══`);
 
   const ws = new WebSocket(WS_URL);
 
@@ -262,21 +262,21 @@ async function readWithWebSocket(_proc) {
   console.log('  WebSocket closed');
 }
 
-// ─── S7Proxy child-process lifecycle ─────────────────────────────────────────
+// ─── S7Plus child-process lifecycle ─────────────────────────────────────────
 
 /**
- * Start S7Proxy as a forked child process.
+ * Start S7Plus as a forked child process.
  * Waits until the web API is listening before returning.
  * @returns {Promise<import('node:child_process').ChildProcess>}
  */
-async function startS7Proxy() {
+async function startS7Plus() {
   // Dynamically import node builtins
   const fs   = await import('node:fs');
   const os   = await import('node:os');
   const path = await import('node:path');
 
   // Write temp config
-  const tmpDir  = fs.mkdtempSync(path.join(os.tmpdir(), 's7proxy-sample-'));
+  const tmpDir  = fs.mkdtempSync(path.join(os.tmpdir(), 's7plus-sample-'));
   const cfgPath = path.join(tmpDir, 'config.json');
   const config = {
     listen: { ip: '0.0.0.0', port: 10102 },
@@ -298,7 +298,7 @@ async function startS7Proxy() {
   const projectRoot = resolve(__dirname, '..', '..', '..');
   const entryPoint  = resolve(projectRoot, 'src', 'index.js');
 
-  console.log('  Spawning S7Proxy child process …');
+  console.log('  Spawning S7Plus child process …');
   const child = fork(entryPoint, [cfgPath], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     cwd: projectRoot,
@@ -315,21 +315,21 @@ async function startS7Proxy() {
     try {
       const res = await fetch(`${BASE_URL}/api/health`);
       if (res.ok) {
-        console.log('  S7Proxy is ready');
+        console.log('  S7Plus is ready');
         return child;
       }
     } catch { /* not yet */ }
     await sleep(300);
   }
   child.kill();
-  throw new Error('S7Proxy did not become ready within 15 s');
+  throw new Error('S7Plus did not become ready within 15 s');
 }
 
 /** @param {import('node:child_process').ChildProcess} child */
-function stopS7Proxy(child) {
+function stopS7Plus(child) {
   if (child.exitCode === null) {
     child.kill('SIGTERM');
-    console.log('  S7Proxy child process stopped');
+    console.log('  S7Plus child process stopped');
   }
 }
 
@@ -370,11 +370,11 @@ async function main() {
   console.log(`\n  ⏳ waiting ${DELAY_MS / 1000}s …`);
   await sleep(DELAY_MS);
 
-  // ── 4 & 5: Start a shared S7Proxy child process ──
+  // ── 4 & 5: Start a shared S7Plus child process ──
   /** @type {import('node:child_process').ChildProcess | undefined} */
   let proxyChild;
   try {
-    proxyChild = await startS7Proxy();
+    proxyChild = await startS7Plus();
 
     // ── 4. FETCH ──
     try {
@@ -393,9 +393,9 @@ async function main() {
       console.error('  ✗ WebSocket failed:', /** @type {Error} */ (err).message);
     }
   } catch (err) {
-    console.error('  ✗ S7Proxy child process failed:', /** @type {Error} */ (err).message);
+    console.error('  ✗ S7Plus child process failed:', /** @type {Error} */ (err).message);
   } finally {
-    if (proxyChild) stopS7Proxy(proxyChild);
+    if (proxyChild) stopS7Plus(proxyChild);
   }
 
   console.log('\n✔ Done');

@@ -1,5 +1,5 @@
 // @ts-check
-// JSON persistence layer for S7Proxy admin configuration and struct storage.
+// JSON persistence layer for S7Plus admin configuration and struct storage.
 // Uses a small file-backed store to keep the package portable and dependency-light.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, writeFileSync } from 'node:fs';
@@ -85,7 +85,7 @@ function resolveStorePath(persistencePath) {
   if (extname(absolutePath).toLowerCase() === '.json') return absolutePath;
 
   const dir = dirname(absolutePath);
-  const stem = basename(absolutePath, extname(absolutePath)) || 's7proxy';
+  const stem = basename(absolutePath, extname(absolutePath)) || 's7plus';
   return join(dir, `${stem}.json`);
 }
 

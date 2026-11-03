@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 describe('unsupported compatibility operations', () => {
   it('blocks the classic/raw backend for the production target before a socket exists', () => {
-    vi.stubEnv('S7PROXY_PRODUCTION_HOST', '192.0.2.10');
+    vi.stubEnv('S7PLUS_PRODUCTION_HOST', '192.0.2.10');
     try {
       const productionHost = new S7CommPlusClient().report.target.host;
       expect(() => new PlcConnection('denied', 'production-fixture', { ip: productionHost, rack: 0, slot: 1 },

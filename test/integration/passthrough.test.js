@@ -17,7 +17,7 @@ import { fixture } from '../s7commplus-fixture.js';
 
 const cr = Buffer.from('0300001611e00000000100c1020100c2020102c0010a', 'hex');
 
-/** @param {number} targetPort @param {(config:import('../../src/protocol/types.js').S7ProxyConfig)=>void} [configure] */
+/** @param {number} targetPort @param {(config:import('../../src/protocol/types.js').S7PlusConfig)=>void} [configure] */
 async function startProxy(targetPort, configure = () => {}) {
   const reservation = createServer();
   reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
@@ -65,7 +65,7 @@ describe('transparent S7CommPlus proxy (loopback only)', () => {
   let credentials;
   let certificateSha256 = '';
   beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), 's7proxy-pass-through-'));
+    directory = await mkdtemp(join(tmpdir(), 's7plus-pass-through-'));
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-noenc', '-keyout', join(directory, 'key.pem'),
       '-out', join(directory, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
     credentials = { key: await readFile(join(directory, 'key.pem')), cert: await readFile(join(directory, 'cert.pem')) };
@@ -146,7 +146,7 @@ describe('transparent S7CommPlus proxy (loopback only)', () => {
   });
 
   it('enforces production raw-forwarding policy without an upstream attempt', async () => {
-    vi.stubEnv('S7PROXY_PRODUCTION_HOST', '192.0.2.10');
+    vi.stubEnv('S7PLUS_PRODUCTION_HOST', '192.0.2.10');
     const { proxy, port } = await startProxy(1, config => { config.targets[0].primary.ip = '192.0.2.10'; });
     const client = connect(port, '127.0.0.1');
     try {

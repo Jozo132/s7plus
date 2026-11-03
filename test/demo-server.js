@@ -29,7 +29,7 @@ const DEFAULT_IP = '127.0.0.1';
  *   Word  2-3   : 0x1234  (big-endian)
  *   DInt  4-7   : 42      (big-endian signed 32-bit)
  *   Real  8-11  : 3.14    (big-endian IEEE 754)
- *   Bytes 12-19 : ASCII "S7Proxy!"
+ *   Bytes 12-19 : ASCII "S7Plus!!"
  *   Bytes 20-99 : sequential 0x00..0x4F
  * @param {Buffer} buf
  */
@@ -40,7 +40,7 @@ function fillDb1(buf) {
   buf.writeUInt16BE(0x1234, 2);
   buf.writeInt32BE(42, 4);
   buf.writeFloatBE(3.14, 8);
-  buf.write('S7Proxy!', 12, 'ascii');
+  buf.write('S7Plus!!', 12, 'ascii');
   for (let i = 20; i < buf.length; i++) {
     buf[i] = (i - 20) & 0xFF;
   }

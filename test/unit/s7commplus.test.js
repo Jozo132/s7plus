@@ -1116,15 +1116,15 @@ describe('S7CommPlus loopback lifecycle (never live)', () => {
     finally { await client.disconnect(); await server.close(); }
   });
   it('supports TLS for the configured default target without opening a socket on construction', () => {
-    vi.stubEnv('S7PROXY_PRODUCTION_HOST', '192.0.2.10');
+    vi.stubEnv('S7PLUS_PRODUCTION_HOST', '192.0.2.10');
     try {
       const client = new S7CommPlusClient({ securityMode: 'tls', tls: { allowAnyCertificate: true } });
       expect(client.report).toMatchObject({ target: { host: '192.0.2.10', port: 102 }, statistics: { sentBytes: 0 } });
     } finally { vi.unstubAllEnvs(); }
   });
   it('supports explicit configured hosts independently of lab and production environment labels', () => {
-    vi.stubEnv('S7PROXY_PRODUCTION_HOST', '192.0.2.10');
-    vi.stubEnv('S7PROXY_LAB_HOST', '192.0.2.11');
+    vi.stubEnv('S7PLUS_PRODUCTION_HOST', '192.0.2.10');
+    vi.stubEnv('S7PLUS_LAB_HOST', '192.0.2.11');
     try {
       const lab = new S7CommPlusClient({ host: '192.0.2.11', securityMode: 'legacy' });
       expect(lab.report).toMatchObject({ selectedProfile: 'LEGACY_PLAINTEXT', productionReadOnly: true });
@@ -1133,9 +1133,9 @@ describe('S7CommPlus loopback lifecycle (never live)', () => {
         const client = new S7CommPlusClient({ host, port: 1102, securityMode: 'tls', tls: { allowAnyCertificate: true } });
         expect(client.report).toMatchObject({ target: { host, port: 1102 }, statistics: { sentBytes: 0 } });
       }
-      vi.stubEnv('S7PROXY_LAB_HOST', '192.0.2.10');
+      vi.stubEnv('S7PLUS_LAB_HOST', '192.0.2.10');
       expect(() => new S7CommPlusClient({ host: '192.0.2.10', securityMode: 'legacy' })).not.toThrow();
-      vi.stubEnv('S7PROXY_PRODUCTION_HOST', 'invalid-fallback');
+      vi.stubEnv('S7PLUS_PRODUCTION_HOST', 'invalid-fallback');
       expect(() => new S7CommPlusClient({ host: 'plc.example.test', securityMode: 'legacy' })).not.toThrow();
     } finally { vi.unstubAllEnvs(); }
   });
@@ -1206,14 +1206,14 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
       await expect(client.writeMember(member, false)).rejects.toMatchObject({ code: 'WRITE_CONFIRMATION_REQUIRED' });
       await expect(client.writeMember({ ...member }, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'UNVERIFIED_ADDRESS' });
       await expect(client.writeMember(member, 1, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'ARGUMENT' });
-      const previousProduction = process.env.S7PROXY_PRODUCTION_HOST;
+      const previousProduction = process.env.S7PLUS_PRODUCTION_HOST;
       const count = server.requests.length;
       try {
-        process.env.S7PROXY_PRODUCTION_HOST = '::ffff:127.0.0.1';
+        process.env.S7PLUS_PRODUCTION_HOST = '::ffff:127.0.0.1';
         await expect(client.writeMember(member, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'READ_ONLY_DENIED' });
       } finally {
-        if (previousProduction === undefined) delete process.env.S7PROXY_PRODUCTION_HOST;
-        else process.env.S7PROXY_PRODUCTION_HOST = previousProduction;
+        if (previousProduction === undefined) delete process.env.S7PLUS_PRODUCTION_HOST;
+        else process.env.S7PLUS_PRODUCTION_HOST = previousProduction;
       }
       expect(server.requests).toHaveLength(count);
       const write = client.writeMember(member, false, { confirmWrite: true, confirmTarget: `127.0.0.1:${server.port}` });
@@ -1256,7 +1256,7 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
     } finally { await client.disconnect(); await server.close(); }
   });
   beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), 's7proxy-loopback-tls-'));
+    directory = await mkdtemp(join(tmpdir(), 's7plus-loopback-tls-'));
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-noenc', '-keyout', join(directory, 'key.pem'),
       '-out', join(directory, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
     credentials = { key: await readFile(join(directory, 'key.pem')), cert: await readFile(join(directory, 'cert.pem')) };
@@ -1682,7 +1682,7 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
             peerCertificateSha256: certificateSha256, capabilities: { blockUpload: 'UNSUPPORTED_PROFILE' } });
           expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'certificateEnrollment', status }));
           certificatePath = client.report.observations.find(entry => entry.kind === 'certificateEnrollment').certificatePath;
-          expect(dirname(certificatePath)).toBe(trustStoreDir ?? join(tmpdir(), 's7proxy', 'certificates'));
+          expect(dirname(certificatePath)).toBe(trustStoreDir ?? join(tmpdir(), 's7plus', 'certificates'));
           expect(warning).toHaveBeenCalledTimes(1);
           expect(warning).toHaveBeenCalledWith(expect.stringContaining(`127.0.0.1:${server.port}`));
           expect(warning).toHaveBeenCalledWith(expect.stringContaining(certificateSha256));
@@ -1812,7 +1812,7 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
   it('requires an explicit CLI profile and an approved pin before reading CA files or connecting', () => {
     expect(() => execFileSync(process.execPath, ['src/plus-explore.js', '--live'], { stdio: 'pipe' })).toThrow();
     expect(() => execFileSync(process.execPath, ['src/plus-explore.js', '--live', '--lab', '--tls'], {
-      stdio: 'pipe', env: { ...process.env, S7PROXY_PRODUCTION_HOST: '192.0.2.10', S7PROXY_LAB_HOST: '192.0.2.11', S7PLUS_TLS_CA: '/nonexistent/ca.pem', S7PLUS_TLS_CERT_SHA256: '' },
+      stdio: 'pipe', env: { ...process.env, S7PLUS_PRODUCTION_HOST: '192.0.2.10', S7PLUS_LAB_HOST: '192.0.2.11', S7PLUS_TLS_CA: '/nonexistent/ca.pem', S7PLUS_TLS_CERT_SHA256: '' },
     })).toThrow(/approved certificate pin/);
   });
   it('accepts the CLI certificate opt-in only with TLS and skips CA/pin prerequisites', async () => {

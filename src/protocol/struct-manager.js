@@ -1,7 +1,7 @@
 // @ts-check
 // StructManager — first-class structured DB access across native, REST, and WebSocket
 //
-// Bridges DBStruct definitions with the S7Proxy connection pool, classic bridge,
+// Bridges DBStruct definitions with the S7Plus connection pool, classic bridge,
 // and DAQ engine to provide named-field read/write/subscribe with automatic
 // encode/decode.
 

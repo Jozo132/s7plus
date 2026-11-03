@@ -13,20 +13,20 @@ let originalEnv;
 
 describe('loadConfig', () => {
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 's7proxy-config-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 's7plus-config-'));
     originalEnv = {
-      S7PROXY_IP: process.env['S7PROXY_IP'],
-      S7PROXY_PORT: process.env['S7PROXY_PORT'],
-      S7PROXY_WEB_HOST: process.env['S7PROXY_WEB_HOST'],
-      S7PROXY_WEB_PORT: process.env['S7PROXY_WEB_PORT'],
+      S7PLUS_IP: process.env['S7PLUS_IP'],
+      S7PLUS_PORT: process.env['S7PLUS_PORT'],
+      S7PLUS_WEB_HOST: process.env['S7PLUS_WEB_HOST'],
+      S7PLUS_WEB_PORT: process.env['S7PLUS_WEB_PORT'],
     };
   });
 
   afterEach(() => {
-    restoreEnv('S7PROXY_IP');
-    restoreEnv('S7PROXY_PORT');
-    restoreEnv('S7PROXY_WEB_HOST');
-    restoreEnv('S7PROXY_WEB_PORT');
+    restoreEnv('S7PLUS_IP');
+    restoreEnv('S7PLUS_PORT');
+    restoreEnv('S7PLUS_WEB_HOST');
+    restoreEnv('S7PLUS_WEB_PORT');
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -36,10 +36,10 @@ describe('loadConfig', () => {
       webApi: { host: '10.10.10.20', port: 8180 },
     });
 
-    process.env['S7PROXY_IP'] = '10.20.20.20';
-    process.env['S7PROXY_PORT'] = '3102';
-    process.env['S7PROXY_WEB_HOST'] = '10.20.20.30';
-    process.env['S7PROXY_WEB_PORT'] = '8280';
+    process.env['S7PLUS_IP'] = '10.20.20.20';
+    process.env['S7PLUS_PORT'] = '3102';
+    process.env['S7PLUS_WEB_HOST'] = '10.20.20.30';
+    process.env['S7PLUS_WEB_PORT'] = '8280';
 
     const config = loadConfig(configPath, {
       listenIp: '127.0.0.1',
@@ -53,12 +53,12 @@ describe('loadConfig', () => {
     expect(config.webApi.port).toBe(8380);
   });
 
-  it('supports S7PROXY_WEB_HOST as an environment override', () => {
+  it('supports S7PLUS_WEB_HOST as an environment override', () => {
     const configPath = writeConfigFile({
       webApi: { host: '10.10.10.20', port: 8180 },
     });
 
-    process.env['S7PROXY_WEB_HOST'] = '0.0.0.0';
+    process.env['S7PLUS_WEB_HOST'] = '0.0.0.0';
 
     const config = loadConfig(configPath);
 

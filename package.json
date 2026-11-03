@@ -18,8 +18,7 @@
   },
   "main": "./src/lib.js",
   "bin": {
-    "s7plus": "src/index.js",
-    "s7proxy": "src/index.js"
+    "s7plus": "src/index.js"
   },
   "files": [
     "src/",

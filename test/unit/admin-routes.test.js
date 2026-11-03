@@ -16,14 +16,14 @@ let app;
 let store;
 /** @type {string} */
 let tmpDir;
-/** @type {import('../../src/protocol/types.js').S7ProxyConfig} */
+/** @type {import('../../src/protocol/types.js').S7PlusConfig} */
 let config;
 /** @type {any} */
 let currentPool;
 
 describe('Admin routes', () => {
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 's7proxy-admin-routes-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 's7plus-admin-routes-'));
     store = new AdminStore(join(tmpDir, 'admin.db'));
     app = createHttpApp();
     currentPool = null;

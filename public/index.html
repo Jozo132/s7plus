@@ -366,8 +366,8 @@ const isFloat = t => { const u = String(t||'').toUpperCase(); return u==='REAL'|
 /* ═════════════════════════════════════════════════════════════════════
    Auth
    ═════════════════════════════════════════════════════════════════════ */
-function getToken() { return sessionStorage.getItem('s7proxy_token'); }
-function setToken(t) { t ? sessionStorage.setItem('s7proxy_token', t) : sessionStorage.removeItem('s7proxy_token'); }
+function getToken() { return sessionStorage.getItem('s7plus_token'); }
+function setToken(t) { t ? sessionStorage.setItem('s7plus_token', t) : sessionStorage.removeItem('s7plus_token'); }
 
 async function doLogin(e) {
   e.preventDefault();

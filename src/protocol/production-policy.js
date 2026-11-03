@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 
 export function getProductionHost() {
-  let host = process.env.S7PROXY_PRODUCTION_HOST;
+  let host = process.env.S7PLUS_PRODUCTION_HOST;
   if (host === undefined) {
     try {
-      const config = JSON.parse(readFileSync(process.env.S7PROXY_TARGET_CONFIG ?? new URL('../../.s7proxy-target.local.json', import.meta.url), 'utf8'));
+      const config = JSON.parse(readFileSync(process.env.S7PLUS_TARGET_CONFIG ?? new URL('../../.s7plus-target.local.json', import.meta.url), 'utf8'));
       host = config.host;
     } catch (error) {
       if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return undefined;
@@ -14,16 +14,16 @@ export function getProductionHost() {
     }
   }
   if (typeof host !== 'string' || !isIP(host) || ['127.0.0.1', '::1', '0.0.0.0', '::'].includes(host)) {
-    throw new Error('Invalid S7PROXY_PRODUCTION_HOST or local target configuration');
+    throw new Error('Invalid S7PLUS_PRODUCTION_HOST or local target configuration');
   }
   return host;
 }
 
 export function getLabHost() {
-  const host = process.env.S7PROXY_LAB_HOST;
+  const host = process.env.S7PLUS_LAB_HOST;
   if (host === undefined) return undefined;
   if (!isIP(host) || ['127.0.0.1', '::1', '0.0.0.0', '::'].includes(host) || host === getProductionHost()) {
-    throw new Error('S7PROXY_LAB_HOST must identify a separate explicitly authorized lab PLC');
+    throw new Error('S7PLUS_LAB_HOST must identify a separate explicitly authorized lab PLC');
   }
   return host;
 }

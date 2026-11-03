@@ -2,7 +2,7 @@
 import { Socket } from 'node:net';
 import { assertClassicTarget } from '../protocol/production-policy.js';
 
-/** @import { S7ProxyConfig } from '../protocol/types.js' */
+/** @import { S7PlusConfig } from '../protocol/types.js' */
 /** @import { Logger } from '../logging/logger.js' */
 /** @import { Metrics } from '../metrics/metrics.js' */
 
@@ -14,7 +14,7 @@ export class PassthroughRouter {
   #sessions = new Set();
   #closed = false;
 
-  /** @param {S7ProxyConfig} config @param {Logger} logger @param {Metrics} metrics */
+  /** @param {S7PlusConfig} config @param {Logger} logger @param {Metrics} metrics */
   constructor(config, logger, metrics) {
     this.#config = structuredClone(config);
     this.#logger = logger.child({ component: 'passthrough-router' });
