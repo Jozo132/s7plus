@@ -3,9 +3,9 @@
 
 export { ProxyServer } from './proxy-server.js';
 export { loadConfig } from './config.js';
-export { WasmBridge } from './wasm/bridge.js';
-export { loadWasmEngine, resetWasmCache } from './wasm/loader.js';
-export { createWasmImports } from './wasm/imports.js';
+export { ClassicBridge, WasmBridge } from './protocol/classic-bridge.js';
+export { loadClassicEngine, resetClassicEngineCache, loadWasmEngine, resetWasmCache } from './protocol/classic-loader.js';
+export { createWasmImports } from './protocol/classic-imports.js';
 export { PlcConnection } from './client/plc-connection.js';
 export { S7CommPlusClient } from './client/s7commplus-client.js';
 export { getOperationPolicy as getS7CommPlusOperationPolicy } from './protocol/s7commplus/operation-policy.js';

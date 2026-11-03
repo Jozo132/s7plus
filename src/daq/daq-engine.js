@@ -10,7 +10,7 @@ import { ReadCoalescer } from './read-coalescer.js';
 import { wordLenToBytes } from '../protocol/constants.js';
 
 /** @import { ConnectionPool } from '../client/connection-pool.js' */
-/** @import { WasmBridge } from '../wasm/bridge.js' */
+/** @import { ClassicBridge } from '../protocol/classic-bridge.js' */
 /** @import { DaqSubscription, DaqConfig, TagDefinition, CachedValue } from '../protocol/types.js' */
 /** @import { Metrics } from '../metrics/metrics.js' */
 /** @import { CoalescedRead } from './read-coalescer.js' */
@@ -19,7 +19,7 @@ import { wordLenToBytes } from '../protocol/constants.js';
 export class DaqEngine extends EventEmitter {
   /** @type {ConnectionPool} */
   #pool;
-  /** @type {WasmBridge} */
+  /** @type {ClassicBridge} */
   #bridge;
   /** @type {DaqConfig} */
   #config;
@@ -47,7 +47,7 @@ export class DaqEngine extends EventEmitter {
 
   /**
    * @param {ConnectionPool} pool
-   * @param {WasmBridge} bridge
+   * @param {ClassicBridge} bridge
    * @param {DaqConfig} config
    * @param {Logger} logger
    * @param {Metrics} metrics

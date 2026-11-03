@@ -48,9 +48,9 @@ const DEFAULT_LIMITS = Object.freeze({
 function classicOffsetWidth(member) {
   const width = CLASSIC_OFFSET_WIDTHS.get(member.softdatatype);
   if (!width || member.offsetConfidence !== 'confirmed' || member.datatype !== SOFTWARE_TYPES[/** @type {keyof typeof SOFTWARE_TYPES} */ (member.softdatatype)]
-    || !Number.isSafeInteger(member.byteOffset) || member.byteOffset < 0 || member.byteOffset > 0xFFFFFFFF
+    || typeof member.byteOffset !== 'number' || !Number.isSafeInteger(member.byteOffset) || member.byteOffset < 0 || member.byteOffset > 0xFFFFFFFF
     || member.byteSize !== width || member.typeInfoId !== null || member.symbolCrc !== 0
-    || member.softdatatype === 1 && (!Number.isInteger(member.bitOffset) || member.bitOffset < 0 || member.bitOffset > 7)
+    || member.softdatatype === 1 && (typeof member.bitOffset !== 'number' || !Number.isInteger(member.bitOffset) || member.bitOffset < 0 || member.bitOffset > 7)
     || member.softdatatype !== 1 && member.bitOffset !== undefined) {
     throw new PlusError('ARGUMENT', 'Classic DB reads require a confirmed standard offset and supported scalar width');
   }
@@ -60,8 +60,8 @@ function classicOffsetWidth(member) {
 /** @param {RuntimeMember} member @param {number|undefined} standardSizeBits */
 function classicOffsetRange(member, standardSizeBits) {
   const width = classicOffsetWidth(member);
-  if (!Number.isSafeInteger(standardSizeBits) || standardSizeBits <= 0) throw new PlusError('ARGUMENT', 'Classic DB reads require a confirmed standard DB size');
-  const start = member.byteOffset * 8 + (member.softdatatype === 1 ? member.bitOffset : 0);
+  if (typeof standardSizeBits !== 'number' || !Number.isSafeInteger(standardSizeBits) || standardSizeBits <= 0) throw new PlusError('ARGUMENT', 'Classic DB reads require a confirmed standard DB size');
+  const start = /** @type {number} */ (member.byteOffset) * 8 + (member.softdatatype === 1 ? /** @type {number} */ (member.bitOffset) : 0);
   const end = start + (member.softdatatype === 1 ? 1 : width * 8);
   if (!Number.isSafeInteger(start) || end > standardSizeBits) throw new PlusError('ARGUMENT', 'Classic DB offset is outside the confirmed standard layout');
   return { start, end };
@@ -78,7 +78,7 @@ function decodeClassicOffsetValue(member, value) {
   const bytes = value.value;
   let decoded;
   switch (member.softdatatype) {
-    case 1: decoded = Boolean(bytes[0] & (1 << member.bitOffset)); break;
+    case 1: decoded = Boolean(bytes[0] & (1 << /** @type {number} */ (member.bitOffset))); break;
     case 2: case 52: decoded = bytes.readUInt8(0); break;
     case 3: decoded = bytes.toString('latin1'); break;
     case 4: case 53: decoded = bytes.readUInt16BE(0); break;
@@ -787,7 +787,9 @@ export class S7CommPlusClient {
     const cached = this.#areas.get(type);
     if (cached) return structuredClone(cached);
     const objectRid = AREA_RIDS[type];
-    const reference = await this.#readSymbolicValue({ accessArea: objectRid, lids: [1] });
+    let reference;
+    try { reference = await this.#readSymbolicValue({ accessArea: objectRid, lids: [1] }); }
+    catch (error) { this.#stop(this.#asError(error)); throw error; }
     const value = reference.value;
     if (value.flags !== 0 || value.datatype !== 18 || !Number.isInteger(value.value) || value.value < 0 || value.value > 0xFFFFFFFF) {
       const error = new PlusError('DATATYPE_MISMATCH', 'Area type reference must be a scalar native RID');
@@ -828,7 +830,7 @@ export class S7CommPlusClient {
     return { area, ...discovery };
   }
 
-  /** @param {{type:'DB',number:number,name:string,objectRid:number,memoryLayout?:string}} block @param {RuntimeMember[]} members */
+  /** @param {{type:'DB',number:number,name:string,objectRid:number,memoryLayout?:string,standardSizeBits?:number}} block @param {RuntimeMember[]} members */
   bindArchiveMembers(block, members) {
     this.#requireReady();
     if (block?.type !== 'DB' || !Number.isInteger(block.number) || block.number < 1 || block.number > 65535
@@ -836,6 +838,7 @@ export class S7CommPlusClient {
       || !Array.isArray(members) || members.length > 1048576) throw new PlusError('ARGUMENT', 'Exact archive DB identity and bounded members required');
     const paths = new Set();
     const addresses = new Set();
+    /** @type {{start:number,end:number,softdatatype:number,byteOffset:number|undefined}[]} */
     const offsetRanges = [];
     for (const member of members) {
       if (typeof member.path !== 'string' || !member.path || paths.has(member.path)) throw new PlusError('ARGUMENT', 'Archive member paths must be unique');
@@ -881,6 +884,7 @@ export class S7CommPlusClient {
     if (!validBlock || typeof block.name !== 'string' || !block.name || !Array.isArray(members) || members.length > 1048576) throw new PlusError('ARGUMENT', 'Exact cached DB or process-area identity and bounded members required');
     const paths = new Set();
     const addresses = new Set();
+    /** @type {{start:number,end:number,softdatatype:number,byteOffset:number|undefined}[]} */
     const offsetRanges = [];
     for (const member of members) {
       if (!member.readable) continue;
@@ -1129,6 +1133,33 @@ export class S7CommPlusClient {
       const failure = this.#asError(error);
       if (!recoverableReadError(failure)) this.#stop(failure);
       throw failure;
+    }
+  }
+
+  /** @param {RuntimeMember[]} members @param {{intervalMs:number,maxCycles:number,maxItems?:number,signal?:AbortSignal}} options */
+  async *pollMembers(members, options) {
+    this.#requireReady();
+    if (!Array.isArray(members) || !members.length || members.length > 4096) throw new PlusError('ARGUMENT', 'Polling requires 1..4096 session members');
+    if (!options || Object.keys(options).some(key => !['intervalMs', 'maxCycles', 'maxItems', 'signal'].includes(key))
+      || !Number.isSafeInteger(options.intervalMs) || options.intervalMs < 10 || options.intervalMs > 60000
+      || !Number.isSafeInteger(options.maxCycles) || options.maxCycles < 1 || options.maxCycles > 100000
+      || !Number.isSafeInteger(options.maxItems ?? 32) || (options.maxItems ?? 32) < 1 || (options.maxItems ?? 32) > 64
+      || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) {
+      throw new PlusError('ARGUMENT', 'Polling requires intervalMs 10..60000, maxCycles 1..100000 and maxItems 1..64');
+    }
+    const selection = [...members];
+    if (selection.some(member => !this.#memberBindings.has(member))) throw new PlusError('UNVERIFIED_ADDRESS', 'Use readable members discovered by this client session');
+    const { intervalMs, maxCycles, maxItems } = options;
+    const signal = options.signal ? AbortSignal.any([options.signal, this.#pacingAbort.signal]) : this.#pacingAbort.signal;
+    for (let cycle = 0; cycle < maxCycles && !signal.aborted; cycle++) {
+      if (cycle) {
+        try { await delay(intervalMs, undefined, { signal }); }
+        catch (error) { if (signal.aborted) return; throw error; }
+      }
+      if (signal.aborted) return;
+      const values = await this.readMembers(selection, { maxItems });
+      if (signal.aborted) return;
+      yield values;
     }
   }
 

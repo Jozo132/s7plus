@@ -6,8 +6,8 @@ import { PlcConnection } from '../../src/client/plc-connection.js';
 import { DaqEngine } from '../../src/daq/daq-engine.js';
 import { Metrics } from '../../src/metrics/metrics.js';
 import { createLogger } from '../../src/logging/logger.js';
-import { WasmBridge } from '../../src/wasm/bridge.js';
-import { loadWasmEngine } from '../../src/wasm/loader.js';
+import { ClassicBridge } from '../../src/protocol/classic-bridge.js';
+import { loadClassicEngine } from '../../src/protocol/classic-loader.js';
 
 const logger = createLogger({ level: 'silent' });
 const tag = { name: 'counter', area: 0x84, dbNum: 1, start: 0, amount: 1, wordLen: 0x02, target: 'plc1' };
@@ -28,7 +28,7 @@ describe('DAQ scan lifecycle', () => {
   let conn;
 
   beforeEach(async () => {
-    const bridge = new WasmBridge(await loadWasmEngine());
+    const bridge = new ClassicBridge(await loadClassicEngine());
     const target = { id: 'plc1', primary: { ip: '127.0.0.1', rack: 0, slot: 1 }, maxConnections: 1 };
     pool = new ConnectionPool(target, bridge, {
       healthCheckIntervalMs: 5000, healthCheckTimeoutMs: 2000, failoverThreshold: 3,

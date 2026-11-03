@@ -10,16 +10,16 @@ export const SOFTWARE_TYPES = Object.freeze({
   51: 'LWORD', 52: 'USINT', 53: 'UINT', 54: 'UDINT', 55: 'SINT', 61: 'WCHAR',
   62: 'WSTRING', 63: 'VARIANT', 64: 'LTIME', 65: 'LTOD', 66: 'LDT', 67: 'DTL',
 });
-const WIRE_TYPES = new Map([[1, 1], [2, 10], [4, 11], [5, 7], [6, 12], [7, 8],
-  [8, 14], [11, 8], [19, 2], [48, 15], [49, 5], [50, 9], [51, 13], [52, 2], [53, 3],
-  [54, 4], [55, 6], [64, 17]]);
-const VALUE_SIZES = new Map([[1, 3], [2, 3], [4, 4], [5, 4], [6, 6], [7, 7],
-  [8, 6], [11, 7], [19, 260], [48, 10], [49, 11], [50, 11], [51, 10], [52, 3], [53, 4],
-  [54, 7], [55, 3], [64, 11]]);
+const WIRE_TYPES = new Map([[1, 1], [2, 10], [3, 2], [4, 11], [5, 7], [6, 12], [7, 8],
+  [8, 14], [9, 3], [10, 4], [11, 8], [19, 2], [48, 15], [49, 5], [50, 9], [51, 13], [52, 2], [53, 3],
+  [54, 4], [55, 6], [61, 3], [64, 17]]);
+const VALUE_SIZES = new Map([[1, 3], [2, 3], [3, 3], [4, 4], [5, 4], [6, 6], [7, 7],
+  [8, 6], [9, 4], [10, 7], [11, 7], [19, 260], [48, 10], [49, 11], [50, 11], [51, 10], [52, 3], [53, 4],
+  [54, 7], [55, 3], [61, 4], [64, 11]]);
 
-/** @typedef {{type:'DB',number:number,name:string|null,objectRid:number,typeInfoId:number|null,status:string,evidence:unknown}} BlockMetadata */
+/** @typedef {{type:'DB',number:number,name:string|null,objectRid:number,typeInfoId:number|null,status:string,evidence:unknown,memoryLayout?:string,standardSizeBits?:number}} BlockMetadata */
 /** @typedef {{type:'I'|'Q'|'M',name:'I'|'Q'|'M',objectRid:number,typeInfoId:number|null,status:string,evidence:unknown}} AreaMetadata */
-/** @typedef {{name?:string|null,path:string|null,parentPath:string|null,datatype:string,softdatatype:number,memberId:number,typeInfoId:number|null,referencedTypeInfoId:number|null,accessPath:number[],symbolCrc:number,arrayDimensions:{lowerBound:number,count:number}[],status:string,readable:boolean,accessMode?:'CLASSIC_OFFSET',byteOffset?:number,bitOffset?:number,byteSize?:number,offsetConfidence?:string}} RuntimeMember */
+/** @typedef {{name?:string|null,path:string|null,parentPath:string|null,datatype:string,softdatatype:number,memberId:number,typeInfoId:number|null,referencedTypeInfoId:number|null,accessPath:number[],symbolCrc:number,arrayDimensions:{lowerBound:number,count:number}[],status:string,readable:boolean,accessMode?:'CLASSIC_OFFSET'|'SYMBOLIC_LID',byteOffset?:number,bitOffset?:number,byteSize?:number,offsetConfidence?:string}} RuntimeMember */
 
 /** @template {{typeInfoId:number|null}} T @param {T} block @param {PlusObject[]} objects @param {number} [maxMembers] */
 export function buildBlockMembers(block, objects, maxMembers = 4096) {
@@ -116,8 +116,21 @@ export function validateMemberValue(member, value) {
       representation: { encoding: 'latin1', maxLength: bytes[0], length: bytes[1] } };
   }
   if (value.flags !== 0 || value.datatype !== expected) throw new PlusError('DATATYPE_MISMATCH', 'Value does not match discovered member datatype', { expectedWireType: expected, actualWireType: value.datatype });
+  if (member.softdatatype === 3 || member.softdatatype === 61) {
+    if (!Number.isInteger(value.value) || value.value < 0 || value.value > (member.softdatatype === 3 ? 255 : 65535)
+      || (member.softdatatype === 61 && value.value >= 0xD800 && value.value <= 0xDFFF)) {
+      throw new PlusError('DATATYPE_MISMATCH', 'Character value is not a supported standalone character');
+    }
+    return { datatype: member.datatype, value: String.fromCharCode(value.value), native: value,
+      representation: { encoding: member.softdatatype === 3 ? 'latin1' : 'utf16' } };
+  }
+  if (member.softdatatype === 10 && (!Number.isInteger(value.value) || value.value < 0 || value.value >= 86400000)) {
+    throw new PlusError('DATATYPE_MISMATCH', 'TIME_OF_DAY must be milliseconds within one day');
+  }
   return { datatype: member.datatype, value: value.value, native: value,
-    representation: member.softdatatype === 11 ? { unit: 'ms', signed: true, bits: 32 }
+    representation: member.softdatatype === 9 ? { unit: 'days', epoch: '1990-01-01' }
+      : member.softdatatype === 10 ? { unit: 'ms', since: 'midnight' }
+      : member.softdatatype === 11 ? { unit: 'ms', signed: true, bits: 32 }
       : member.softdatatype === 64 ? { unit: 'ns', signed: true, bits: 64 } : null };
 }
 

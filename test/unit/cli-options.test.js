@@ -36,6 +36,7 @@ describe('formatCliHelp', () => {
   it('describes the supported override flags', () => {
     const help = formatCliHelp();
 
+    expect(help).toContain('Usage: s7plus ');
     expect(help).toContain('--host, --ip <host>');
     expect(help).toContain('--web-port <port>');
     expect(help).toContain('CLI overrides take precedence');

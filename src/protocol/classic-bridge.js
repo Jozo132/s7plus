@@ -1,29 +1,29 @@
 // @ts-check
-// JS ↔ WASM bridge — high-level typed wrapper around WASM exports
+// Classic protocol bridge, retaining the legacy low-level engine interface.
 
-/** @import { WasmEngine, WasmExports, WasmImports } from './loader.js' */
+/** @import { ClassicEngine, ClassicExports } from './classic-loader.js' */
 /** @import { ParsedPDU } from '../protocol/types.js' */
 
-export class WasmBridge {
-  /** @type {WasmEngine} */
+export class ClassicBridge {
+  /** @type {ClassicEngine} */
   #engine;
   /** @type {Uint8Array} */
-  #wasmMemory;
+  #memoryView;
 
-  /** @param {WasmEngine} engine */
+  /** @param {ClassicEngine} engine */
   constructor(engine) {
     this.#engine = engine;
-    this.#wasmMemory = new Uint8Array(engine.memory.buffer);
+    this.#memoryView = new Uint8Array(engine.memory.buffer);
   }
 
   #refreshMemoryView() {
-    if (this.#wasmMemory.buffer !== this.#engine.memory.buffer) {
-      this.#wasmMemory = new Uint8Array(this.#engine.memory.buffer);
+    if (this.#memoryView.buffer !== this.#engine.memory.buffer) {
+      this.#memoryView = new Uint8Array(this.#engine.memory.buffer);
     }
   }
 
   /**
-   * Copy Node.js Buffer into WASM memory at the RX buffer region. Returns offset written to.
+  * Copy a Node.js Buffer into the RX region. Returns the offset written to.
    * @param {Buffer} data
    * @param {number} [offset=0]
    * @returns {number}
@@ -38,12 +38,12 @@ export class WasmBridge {
       throw new Error(`Data (${data.length} bytes) exceeds RX buffer capacity at offset ${offset}`);
     }
 
-    this.#wasmMemory.set(data, writeOffset);
+    this.#memoryView.set(data, writeOffset);
     return writeOffset;
   }
 
   /**
-   * Read bytes from WASM TX buffer region into a Node.js Buffer.
+  * Read bytes from the TX region into a Node.js Buffer.
    * @param {number} offset
    * @param {number} length
    * @returns {Buffer}
@@ -51,30 +51,30 @@ export class WasmBridge {
   readFromTx(offset, length) {
     this.#refreshMemoryView();
     const txBase = this.#engine.exports.getTxBufferOffset();
-    return Buffer.from(this.#wasmMemory.slice(txBase + offset, txBase + offset + length));
+    return Buffer.from(this.#memoryView.subarray(txBase + offset, txBase + offset + length));
   }
 
   /**
-   * Read bytes from arbitrary WASM memory offset.
+  * Read bytes from an engine memory offset.
    * @param {number} offset
    * @param {number} length
    * @returns {Buffer}
    */
   readMemory(offset, length) {
     this.#refreshMemoryView();
-    return Buffer.from(this.#wasmMemory.slice(offset, offset + length));
+    return Buffer.from(this.#memoryView.subarray(offset, offset + length));
   }
 
   /**
-   * Copy data to scratch area. Returns WASM pointer.
+  * Copy data to the scratch area. Returns its offset.
    * @param {Buffer} data
    * @returns {number}
    */
   copyToScratch(data) {
     this.#refreshMemoryView();
     const ptr = this.#engine.exports.scratchAlloc(data.length);
-    if (ptr === 0) throw new Error('WASM scratch area OOM');
-    this.#wasmMemory.set(data, ptr);
+    if (ptr === 0) throw new Error('Classic engine scratch area OOM');
+    this.#memoryView.set(data, ptr);
     return ptr;
   }
 
@@ -84,12 +84,12 @@ export class WasmBridge {
    * @returns {{ cotpType: number; pdu: ParsedPDU | null }}
    */
   parseFrame(frame) {
-    const wasmPtr = this.copyToRx(frame);
+    const framePtr = this.copyToRx(frame);
     const e = this.#engine.exports;
 
-    const rc = e.frame_parse(wasmPtr, frame.length);
+    const rc = e.frame_parse(framePtr, frame.length);
     if (rc !== 0) {
-      throw new Error(`Frame parse error: ${rc} (WASM error: ${e.getLastError()})`);
+      throw new Error(`Frame parse error: ${rc} (engine error: ${e.getLastError()})`);
     }
 
     const cotpType = e.cotp_getPduType();
@@ -157,14 +157,9 @@ export class WasmBridge {
    * @returns {Buffer}
    */
   buildCotpDR(srcRef, dstRef, reason = 0) {
-    const e = this.#engine.exports;
-    this.#refreshMemoryView();
-
-    const txBase = e.getTxBufferOffset();
-    const cotpLen = e.cotp_buildDR(srcRef, dstRef, reason, txBase + 4);
-    e.tpkt_build(cotpLen, txBase);
-
-    return this.readFromTx(0, 4 + cotpLen);
+    return Buffer.from([3, 0, 0, 11, 6, 0x80,
+      (dstRef >>> 8) & 0xFF, dstRef & 0xFF,
+      (srcRef >>> 8) & 0xFF, srcRef & 0xFF, reason & 0xFF]);
   }
 
   /**
@@ -177,15 +172,11 @@ export class WasmBridge {
   buildSetupComm(maxAmqCalling, maxAmqCalled, pduSize) {
     const e = this.#engine.exports;
     this.#refreshMemoryView();
-
-    e.scratchReset();
-    const scratchPtr = e.scratchAlloc(256);
-    const s7Len = e.s7_buildSetupComm(maxAmqCalling, maxAmqCalled, pduSize, scratchPtr);
-
     const txBase = e.getTxBufferOffset();
-    const totalLen = e.frame_build(scratchPtr, s7Len, txBase);
-
-    return this.readFromTx(0, totalLen);
+    const s7Len = e.s7_buildSetupComm(maxAmqCalling, maxAmqCalled, pduSize, txBase + 7);
+    e.tpkt_build(s7Len + 3, txBase);
+    e.cotp_buildDT(1, txBase + 4);
+    return this.readFromTx(0, s7Len + 7);
   }
 
   /**
@@ -200,15 +191,11 @@ export class WasmBridge {
   buildReadRequest(area, dbNum, start, amount, wordLen) {
     const e = this.#engine.exports;
     this.#refreshMemoryView();
-
-    e.scratchReset();
-    const scratchPtr = e.scratchAlloc(256);
-    const s7Len = e.s7_buildReadRequest(area, dbNum, start, amount, wordLen, scratchPtr);
-
     const txBase = e.getTxBufferOffset();
-    const totalLen = e.frame_build(scratchPtr, s7Len, txBase);
-
-    return this.readFromTx(0, totalLen);
+    const s7Len = e.s7_buildReadRequest(area, dbNum, start, amount, wordLen, txBase + 7);
+    e.tpkt_build(s7Len + 3, txBase);
+    e.cotp_buildDT(1, txBase + 4);
+    return this.readFromTx(0, s7Len + 7);
   }
 
   /**
@@ -227,13 +214,11 @@ export class WasmBridge {
 
     e.scratchReset();
     const dataPtr = this.copyToScratch(data);
-    const scratchPtr = e.scratchAlloc(256);
-    const s7Len = e.s7_buildWriteRequest(area, dbNum, start, amount, wordLen, dataPtr, data.length, scratchPtr);
-
     const txBase = e.getTxBufferOffset();
-    const totalLen = e.frame_build(scratchPtr, s7Len, txBase);
-
-    return this.readFromTx(0, totalLen);
+    const s7Len = e.s7_buildWriteRequest(area, dbNum, start, amount, wordLen, dataPtr, data.length, txBase + 7);
+    e.tpkt_build(s7Len + 3, txBase);
+    e.cotp_buildDT(1, txBase + 4);
+    return this.readFromTx(0, s7Len + 7);
   }
 
   /**
@@ -248,19 +233,17 @@ export class WasmBridge {
   buildBitWriteRequest(area, dbNum, byteOffset, bitOffset, value) {
     const e = this.#engine.exports;
     this.#refreshMemoryView();
-
-    e.scratchReset();
-    const scratchPtr = e.scratchAlloc(256);
-    const s7Len = e.s7_buildBitWriteRequest(area, dbNum, byteOffset, bitOffset, value ? 1 : 0, scratchPtr);
-
     const txBase = e.getTxBufferOffset();
-    const totalLen = e.frame_build(scratchPtr, s7Len, txBase);
-
-    return this.readFromTx(0, totalLen);
+    const s7Len = e.s7_buildBitWriteRequest(area, dbNum, byteOffset, bitOffset, value ? 1 : 0, txBase + 7);
+    e.tpkt_build(s7Len + 3, txBase);
+    e.cotp_buildDT(1, txBase + 4);
+    return this.readFromTx(0, s7Len + 7);
   }
 
-  /** @returns {WasmExports} */
+  /** @returns {ClassicExports} */
   get exports() {
     return this.#engine.exports;
   }
 }
+
+export { ClassicBridge as WasmBridge };

@@ -5,7 +5,7 @@
 // Demonstrates five approaches, executed 5 seconds apart:
 //   1. node-snap7 native client
 //   2. S7Proxy compatibility layer  (S7Client — drop-in snap7 replacement)
-//   3. S7Proxy native mode          (PlcConnection + WasmBridge)
+//   3. S7Proxy native mode          (PlcConnection + ClassicBridge)
 //   4. S7Proxy child process + HTTP FETCH   (REST API)
 //   5. S7Proxy child process + WebSocket    (real-time push)
 //
@@ -24,9 +24,8 @@ import { WebSocket } from 'ws';
 import { isIP } from 'node:net';
 import { S7Client } from '../../../src/compat/s7client.js';
 import { PlcConnection } from '../../../src/client/plc-connection.js';
-import { WasmBridge } from '../../../src/wasm/bridge.js';
-import { loadWasmEngine } from '../../../src/wasm/loader.js';
-import { createWasmImports } from '../../../src/wasm/imports.js';
+import { ClassicBridge } from '../../../src/protocol/classic-bridge.js';
+import { loadClassicEngine } from '../../../src/protocol/classic-loader.js';
 import { createLogger } from '../../../src/logging/logger.js';
 import { S7AreaDB, S7WLWord } from '../../../src/protocol/constants.js';
 
@@ -125,12 +124,11 @@ async function readWithCompat() {
 // ─── 3. S7Proxy native mode ─────────────────────────────────────────────────
 
 async function readWithNative() {
-  console.log('\n═══ 3/5  S7Proxy native (PlcConnection + WasmBridge) ═══');
+  console.log('\n═══ 3/5  S7Proxy native (PlcConnection + ClassicBridge) ═══');
 
   const logger = createLogger({ level: 'silent' });
-  const imports = createWasmImports(logger);
-  const engine = await loadWasmEngine(imports);
-  const bridge = new WasmBridge(engine);
+  const engine = await loadClassicEngine();
+  const bridge = new ClassicBridge(engine);
 
   const conn = new PlcConnection(
     'sample-conn', 'plc1',

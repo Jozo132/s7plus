@@ -5,7 +5,7 @@
 // Demonstrates five approaches, executed 5 seconds apart:
 //   1. node-snap7 native client
 //   2. S7Proxy compatibility layer  (S7Client)
-//   3. S7Proxy native mode          (PlcConnection + WasmBridge)
+//   3. S7Proxy native mode          (PlcConnection + ClassicBridge)
 //   4. S7Proxy child process + Admin HTTP      (admin REST write/read)
 //   5. S7Proxy child process + Admin WebSocket (admin WS write/read)
 //
@@ -26,9 +26,8 @@ import { WebSocket } from 'ws';
 import { isIP } from 'node:net';
 import { S7Client } from '../../../src/compat/s7client.js';
 import { PlcConnection } from '../../../src/client/plc-connection.js';
-import { WasmBridge } from '../../../src/wasm/bridge.js';
-import { loadWasmEngine } from '../../../src/wasm/loader.js';
-import { createWasmImports } from '../../../src/wasm/imports.js';
+import { ClassicBridge } from '../../../src/protocol/classic-bridge.js';
+import { loadClassicEngine } from '../../../src/protocol/classic-loader.js';
 import { createLogger } from '../../../src/logging/logger.js';
 import {
   S7AreaDB,
@@ -104,7 +103,7 @@ function getS7HeaderSize(messageType) {
 }
 
 /**
- * @param {WasmBridge} bridge
+ * @param {ClassicBridge} bridge
  * @param {Buffer} frame
  */
 function parseS7Frame(bridge, frame) {
@@ -126,7 +125,7 @@ function logPdu(label, pdu) {
 
 /**
  * @param {Buffer} response
- * @param {WasmBridge} bridge
+ * @param {ClassicBridge} bridge
  */
 function extractNativeReadValue(response, bridge) {
   const { pdu, dataItemOffset } = parseS7Frame(bridge, response);
@@ -149,7 +148,7 @@ function extractNativeReadValue(response, bridge) {
 
 /**
  * @param {Buffer} response
- * @param {WasmBridge} bridge
+ * @param {ClassicBridge} bridge
  */
 function logNativeWriteStatus(response, bridge) {
   const { pdu, dataItemOffset } = parseS7Frame(bridge, response);
@@ -291,9 +290,8 @@ async function writeWithCompat() {
 
 async function writeWithNative() {
   const logger = createLogger({ level: 'silent' });
-  const imports = createWasmImports(logger);
-  const engine = await loadWasmEngine(imports);
-  const bridge = new WasmBridge(engine);
+  const engine = await loadClassicEngine();
+  const bridge = new ClassicBridge(engine);
 
   const conn = new PlcConnection(
     'sample2-native', 'plc1',
@@ -306,7 +304,7 @@ async function writeWithNative() {
 
   try {
     await runWriteCycle(
-      '3/5  S7Proxy native (PlcConnection + WasmBridge)',
+      '3/5  S7Proxy native (PlcConnection + ClassicBridge)',
       async () => {
         const frame = bridge.buildReadRequest(S7AreaDB, DB_NUMBER, BYTE_OFFSET, WORD_AMOUNT, S7WLWord);
         console.log(`  [debug] native read request: ${hex(frame)}`);

@@ -1,5 +1,28 @@
 # Third-Party Notices
 
+## Runtime Dependencies
+
+The following are or were dependencies, not source copied into this project.
+Versions shown are those inspected on 2026-11-03; the package's version ranges
+can resolve to later versions. Inspect the resolved dependency licenses again
+for each release.
+
+- Former dependency `@assemblyscript/loader` 0.28.20, Daniel Wirtz and contributors, Apache-2.0:
+	https://github.com/AssemblyScript/assemblyscript/tree/v0.28.20/lib/loader.
+	The full license is at https://github.com/AssemblyScript/assemblyscript/blob/v0.28.20/LICENSE.
+	The loader is no longer a dependency or included in the JavaScript engine.
+- `ws` 8.22.1, Einar Otto Stangvik, Arnout Kazemier, Luigi Pinca and
+	contributors, MIT: https://github.com/websockets/ws/tree/8.22.1.
+	Its full license and copyright notices are included in the installed package
+	and at https://github.com/websockets/ws/blob/8.22.1/LICENSE.
+- `@noble/hashes` 1.8.0, Paul Miller, MIT:
+	https://github.com/paulmillr/noble-hashes/tree/1.8.0. Its full license is
+	included in the installed package and the dependency is discussed below.
+
+The project's own `package.json` declares MIT, but this checkout does not
+contain a project LICENSE file. Confirm the copyright holder and provide the
+project license text before publication.
+
 ## S7CommPlus Protocol Reference
 
 The new Node.js codec and client were developed with reference to the MIT-licensed

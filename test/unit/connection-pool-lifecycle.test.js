@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionPool } from '../../src/client/connection-pool.js';
 import { PlcConnection } from '../../src/client/plc-connection.js';
 import { createLogger } from '../../src/logging/logger.js';
-import { WasmBridge } from '../../src/wasm/bridge.js';
-import { loadWasmEngine } from '../../src/wasm/loader.js';
+import { ClassicBridge } from '../../src/protocol/classic-bridge.js';
+import { loadClassicEngine } from '../../src/protocol/classic-loader.js';
 
 const logger = createLogger({ level: 'silent' });
 const target = { id: 'lifecycle', primary: { ip: '127.0.0.1', rack: 0, slot: 1 }, maxConnections: 1 };
@@ -21,7 +21,7 @@ describe('ConnectionPool recovery ownership', () => {
   let attempts;
 
   beforeEach(async () => {
-    const bridge = new WasmBridge(await loadWasmEngine());
+    const bridge = new ClassicBridge(await loadClassicEngine());
     attempts = [];
     vi.useFakeTimers();
     vi.spyOn(PlcConnection.prototype, 'connect').mockImplementation(

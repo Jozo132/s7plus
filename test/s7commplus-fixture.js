@@ -210,6 +210,7 @@ export async function fixture(options = {}) {
             const accessSubArea = cursor.uint();
             const lids = Array.from({ length: pathLength }, () => cursor.uint());
             if (symbolCrc !== 0 || accessArea < 0x8A0E0000 || accessSubArea !== 2550 || lids.length !== 3 || lids[0] !== 3) throw new Error('Expected standard DB ClassicBlob range');
+            /** @type {Buffer|undefined} */
             const bytes = options.classicOffsetValues[`${accessArea & 0xFFFF}:${lids[1]}:${lids[2]}`];
             if (!Buffer.isBuffer(bytes) || bytes.length !== lids[2]) throw new Error('No exact ClassicBlob fixture range');
             const key = `${accessArea & 0xFFFF}:${lids[1]}:${lids[2]}`;

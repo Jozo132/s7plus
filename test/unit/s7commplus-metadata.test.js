@@ -256,6 +256,21 @@ describe('native type metadata', () => {
     expect(() => validateMemberValue(enabled, decodeValue(new Cursor(Buffer.from([0, 8, 1]))))).toThrow(/match/);
     expect(() => decodeValue(new Cursor(Buffer.from([0, 1, 2])))).toThrow(/BOOL/);
   });
+  it('decodes character, date and time-of-day scalar wire values', () => {
+    const types = decodeObjects(new Cursor(typeObject(root, [
+      { name: 'Char', lid: 1, type: 3 }, { name: 'Wide', lid: 2, type: 61 },
+      { name: 'Date', lid: 3, type: 9 }, { name: 'Tod', lid: 4, type: 10 },
+    ])));
+    const members = buildBlockMembers(block, types).members;
+    const read = (/** @type {number} */ index, /** @type {number[]} */ bytes) => validateMemberValue(members[index], decodeValue(new Cursor(Buffer.from(bytes))));
+    expect(read(0, [0, 2, 0xE9])).toMatchObject({ value: '\u00e9', representation: { encoding: 'latin1' } });
+    expect(read(1, [0, 3, 0x03, 0xA9])).toMatchObject({ value: '\u03a9', representation: { encoding: 'utf16' } });
+    expect(read(2, [0, 3, 0, 1])).toMatchObject({ value: 1, representation: { unit: 'days', epoch: '1990-01-01' } });
+    expect(read(3, [0, 4, 1])).toMatchObject({ value: 1, representation: { unit: 'ms', since: 'midnight' } });
+    expect(() => read(1, [0, 3, 0xD8, 0])).toThrow(/standalone character/);
+    expect(() => validateMemberValue(members[3], { flags: 0, datatype: 4, value: 86400000, raw: Buffer.alloc(0) })).toThrow(/within one day/);
+    expect(members.map(memberValueSize)).toEqual([3, 4, 4, 7]);
+  });
   it('validates bounded S7 STRING headers, empty values and response-size estimates', () => {
     const member = buildBlockMembers(block, objects()).members.find(candidate => candidate.path === 'Title');
     if (!member) throw new Error('Missing synthetic STRING');
@@ -463,6 +478,52 @@ describe('native I/Q/M area discovery', () => {
 });
 
 describe('public native discovery and qualified reads', () => {
+  it('provides bounded Plus polling with session-owned members and cancellation', async () => {
+    const server = await fixture({ metadata: true });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, limits: { maxRequests: 80, readPacingMs: 10 } });
+    try {
+      await client.connect();
+      const discovery = await client.listBlockMembers({ type: 'DB', number: 7 });
+      const member = discovery.members.find(candidate => candidate.path === 'Enabled' && candidate.readable);
+      if (!member) throw new Error('Missing synthetic member');
+      const before = server.requests.length;
+      const members = [member];
+      const options = { intervalMs: 10, maxCycles: 2, maxItems: 1 };
+      const scans = client.pollMembers(members, options);
+      expect(server.requests).toHaveLength(before);
+      expect((await scans.next()).value).toMatchObject([{ observation: { value: true, quality: 'GOOD' } }]);
+      members[0] = { ...member };
+      options.maxCycles = 0;
+      options.maxItems = 0;
+      expect((await scans.next()).value).toMatchObject([{ observation: { value: true, quality: 'GOOD' } }]);
+      expect((await scans.next()).done).toBe(true);
+      expect(server.requests).toHaveLength(before + 2);
+
+      const controller = new AbortController();
+      const cancelled = client.pollMembers([member], { intervalMs: 60000, maxCycles: 2, signal: controller.signal });
+      await cancelled.next();
+      const waiting = cancelled.next();
+      controller.abort();
+      expect((await waiting).done).toBe(true);
+      const afterCancellation = server.requests.length;
+      await expect(client.pollMembers([{ ...member }], { intervalMs: 10, maxCycles: 1 }).next()).rejects.toMatchObject({ code: 'UNVERIFIED_ADDRESS' });
+      await expect(client.pollMembers([member], { intervalMs: 0, maxCycles: 1 }).next()).rejects.toMatchObject({ code: 'ARGUMENT' });
+      await expect(client.pollMembers([member], { intervalMs: 10, maxCycles: 0 }).next()).rejects.toMatchObject({ code: 'ARGUMENT' });
+      const alreadyAborted = new AbortController();
+      alreadyAborted.abort();
+      expect((await client.pollMembers([member], { intervalMs: 10, maxCycles: 1, signal: alreadyAborted.signal }).next()).done).toBe(true);
+      expect(server.requests).toHaveLength(afterCancellation);
+      expect(server.errors).toEqual([]);
+      const disconnected = client.pollMembers([member], { intervalMs: 60000, maxCycles: 2 });
+      await disconnected.next();
+      const pending = disconnected.next();
+      const beforeDisconnect = server.requests.length;
+      await client.disconnect();
+      expect((await pending).done).toBe(true);
+      expect(server.requests).toHaveLength(beforeDisconnect);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+
   it('switches larger batch profiles on the same cached structure without changing value order', async () => {
     const server = await fixture({ metadata: true });
     const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, limits: { maxRequests: 80, readPacingMs: 10 } });

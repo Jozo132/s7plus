@@ -64,6 +64,7 @@ describe('archive-backed read descriptors', () => {
       classicOffsetPValues: { '7:12:4': Buffer.from([0, 8, 42]) } });
     const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
     const block = { type: /** @type {const} */ ('DB'), number: 7, name: 'Standard', objectRid: 0x8A0E0007, memoryLayout: 'standard', standardSizeBits: 128 };
+    /** @type {import('../../src/protocol/s7commplus/type-info.js').RuntimeMember[]} */
     const members = [
       { path: 'Enabled', parentPath: null, datatype: 'BOOL', softdatatype: 1, memberId: 0, typeInfoId: null, referencedTypeInfoId: null,
         accessPath: [], symbolCrc: 0, arrayDimensions: [], status: 'ARCHIVE_UNVERIFIED', readable: true, accessMode: /** @type {const} */ ('CLASSIC_OFFSET'), byteOffset: 8, bitOffset: 2, byteSize: 1, offsetConfidence: 'confirmed' },

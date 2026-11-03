@@ -87,7 +87,7 @@ export function parseCliArgs(argv) {
  * @param {string} [binName]
  * @returns {string}
  */
-export function formatCliHelp(binName = 's7proxy') {
+export function formatCliHelp(binName = 's7plus') {
   return [
     `Usage: ${binName} [config-path] [options]`,
     '',

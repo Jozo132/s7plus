@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.js", "src/**/*.d.ts", "test/**/*.js"],
-  "exclude": ["node_modules", "build", "assembly", "dist"]
+  "exclude": ["node_modules", "build", "dist"]
 }

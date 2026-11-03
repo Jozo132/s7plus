@@ -1,14 +1,11 @@
 // @ts-check
-// WASM module loader — loads and instantiates the AssemblyScript-compiled s7engine.wasm
+// Compatibility loader for the JavaScript classic protocol engine.
 
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import * as loader from '@assemblyscript/loader';
+import { createClassicEngine } from '../protocol/classic-engine.js';
 
 /**
- * @typedef {Object} WasmExports
- * @property {WebAssembly.Memory} memory
+ * @typedef {Object} ClassicExports
+ * @property {{buffer:ArrayBuffer}} memory
  *
  * @property {(ptr: number, len: number) => number} tpkt_parse
  * @property {(payloadLen: number, outPtr: number) => number} tpkt_build
@@ -68,7 +65,7 @@ import * as loader from '@assemblyscript/loader';
  */
 
 /**
- * @typedef {Object} WasmImports
+ * @typedef {Object} ClassicImports
  * @property {(ptr: number, len: number) => void} log_debug
  * @property {(ptr: number, len: number) => void} log_error
  * @property {() => number} now_ms
@@ -76,54 +73,28 @@ import * as loader from '@assemblyscript/loader';
  */
 
 /**
- * @typedef {Object} WasmEngine
+ * @typedef {Object} ClassicEngine
  * @property {*} instance
- * @property {WasmExports} exports
- * @property {WebAssembly.Memory} memory
+ * @property {ClassicExports} exports
+ * @property {{buffer:ArrayBuffer}} memory
  */
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const WASM_PATH = join(__dirname, '..', '..', 'build', 's7engine.wasm');
-
-/** @type {WasmEngine | null} */
+/** @type {ClassicEngine | null} */
 let cachedEngine = null;
 
 /**
- * Load and instantiate the WASM engine.
- * @param {Partial<WasmImports>} [imports]
- * @returns {Promise<WasmEngine>}
+ * Return the classic JavaScript engine. The legacy name is retained for compatibility.
+ * @param {Partial<ClassicImports>} [imports]
+ * @returns {Promise<ClassicEngine>}
  */
-export async function loadWasmEngine(imports) {
+export async function loadClassicEngine(imports) {
   if (cachedEngine) return cachedEngine;
-
-  const wasmBytes = await readFile(WASM_PATH);
-  const wasmModule = await WebAssembly.compile(new Uint8Array(wasmBytes.buffer, wasmBytes.byteOffset, wasmBytes.byteLength));
-
-  /** @type {WasmImports} */
-  const hostImports = {
-    log_debug: imports?.log_debug ?? (() => {}),
-    log_error: imports?.log_error ?? (() => {}),
-    now_ms: imports?.now_ms ?? (() => Date.now()),
-    memory_grown: imports?.memory_grown ?? (() => {}),
-  };
-
-  const instance = await loader.instantiate(wasmModule, {
-    env: /** @type {*} */ (hostImports),
-  });
-
-  /** @type {WasmEngine} */
-  const engine = {
-    instance,
-    exports: /** @type {WasmExports} */ (/** @type {unknown} */ (instance.exports)),
-    memory: /** @type {WebAssembly.Memory} */ (instance.exports.memory),
-  };
-
-  cachedEngine = engine;
-  return engine;
+  cachedEngine = createClassicEngine();
+  return cachedEngine;
 }
 
-export function resetWasmCache() {
+export function resetClassicEngineCache() {
   cachedEngine = null;
 }
+
+export { loadClassicEngine as loadWasmEngine, resetClassicEngineCache as resetWasmCache };

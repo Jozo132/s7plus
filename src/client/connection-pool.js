@@ -6,7 +6,7 @@ import { PlcConnection } from './plc-connection.js';
 import { FailoverManager } from './failover-manager.js';
 
 /** @import { PlcTarget, PlcEndpoint, FailoverConfig } from '../protocol/types.js' */
-/** @import { WasmBridge } from '../wasm/bridge.js' */
+/** @import { ClassicBridge } from '../protocol/classic-bridge.js' */
 /** @import { Logger } from '../logging/logger.js' */
 
 export class ConnectionPool extends EventEmitter {
@@ -14,7 +14,7 @@ export class ConnectionPool extends EventEmitter {
   #targetId;
   /** @type {PlcTarget} */
   #target;
-  /** @type {WasmBridge} */
+  /** @type {ClassicBridge} */
   #bridge;
   /** @type {Logger} */
   #logger;
@@ -41,7 +41,7 @@ export class ConnectionPool extends EventEmitter {
 
   /**
    * @param {PlcTarget} target
-   * @param {WasmBridge} bridge
+   * @param {ClassicBridge} bridge
    * @param {FailoverConfig} failoverConfig
    * @param {Logger} logger
    * @param {number} [poolSize=2]

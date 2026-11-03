@@ -1,26 +1,26 @@
 // @ts-check
-// Host import functions provided to WASM module
+// Compatibility helper retained for existing consumers.
 
 /** @import { Logger } from '../logging/logger.js' */
 
 /**
- * Create WASM host imports.
+ * Create legacy host callbacks.
  * @param {Logger} logger
- * @returns {import('./loader.js').WasmImports}
+ * @returns {import('./classic-loader.js').ClassicImports}
  */
 export function createWasmImports(logger) {
   return {
     log_debug(_ptr, _len) {
-      logger.debug('WASM debug');
+      logger.debug('Classic engine debug');
     },
     log_error(_ptr, _len) {
-      logger.error('WASM error');
+      logger.error('Classic engine error');
     },
     now_ms() {
       return Date.now();
     },
     memory_grown(oldPages, newPages) {
-      logger.debug({ oldPages, newPages }, 'WASM memory grown');
+      logger.debug({ oldPages, newPages }, 'Classic engine memory grown');
     },
   };
 }

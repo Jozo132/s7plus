@@ -1,7 +1,7 @@
 // @ts-check
 // StructManager — first-class structured DB access across native, REST, and WebSocket
 //
-// Bridges DBStruct definitions with the S7Proxy connection pool, WASM bridge,
+// Bridges DBStruct definitions with the S7Proxy connection pool, classic bridge,
 // and DAQ engine to provide named-field read/write/subscribe with automatic
 // encode/decode.
 
@@ -10,7 +10,7 @@ import { DBStruct } from './db-struct.js';
 import { S7AreaDB, S7WLBit, S7WLByte, S7_MSG_ACK, S7_MSG_ACK_DATA, S7_MSG_USERDATA } from './constants.js';
 
 /** @import { ConnectionPool } from '../client/connection-pool.js' */
-/** @import { WasmBridge } from '../wasm/bridge.js' */
+/** @import { ClassicBridge } from '../protocol/classic-bridge.js' */
 /** @import { DaqEngine } from '../daq/daq-engine.js' */
 /** @import { S7StructDef, S7Value } from './db-struct.js' */
 /** @import { Logger } from '../logging/logger.js' */
@@ -30,7 +30,7 @@ function getS7HeaderSize(messageType) {
 }
 
 /**
- * @param {WasmBridge} bridge
+ * @param {ClassicBridge} bridge
  * @param {Buffer} response
  * @returns {{ pdu: import('./types.js').ParsedPDU, dataStart: number }}
  */
@@ -104,7 +104,7 @@ function getAtomicBitWriteCandidate(struct, values) {
 }
 
 /**
- * @param {WasmBridge} bridge
+ * @param {ClassicBridge} bridge
  * @param {Buffer} response
  */
 function assertSuccessfulWriteResponse(bridge, response) {
@@ -172,7 +172,7 @@ export class StructManager extends EventEmitter {
 
   /** @type {ConnectionPool | null} */
   #pool;
-  /** @type {WasmBridge | null} */
+  /** @type {ClassicBridge | null} */
   #bridge;
   /** @type {DaqEngine | null} */
   #daq;
@@ -184,7 +184,7 @@ export class StructManager extends EventEmitter {
   /**
    * @param {{
    *   pool?: ConnectionPool | null,
-   *   bridge?: WasmBridge | null,
+   *   bridge?: ClassicBridge | null,
    *   daq?: DaqEngine | null,
    *   targetId?: string,
    *   logger?: Logger | null
@@ -209,7 +209,7 @@ export class StructManager extends EventEmitter {
    * Called by ProxyServer once infrastructure is ready.
    * @param {{
    *   pool?: ConnectionPool | null,
-   *   bridge?: WasmBridge | null,
+   *   bridge?: ClassicBridge | null,
    *   daq?: DaqEngine | null,
    *   targetId?: string,
    *   logger?: Logger | null
@@ -565,7 +565,7 @@ export class StructManager extends EventEmitter {
 
   #requireConnection() {
     if (!this.#pool || !this.#bridge) {
-      throw new Error('StructManager requires a ConnectionPool and WasmBridge');
+      throw new Error('StructManager requires a ConnectionPool and ClassicBridge');
     }
     return { pool: this.#pool, bridge: this.#bridge };
   }

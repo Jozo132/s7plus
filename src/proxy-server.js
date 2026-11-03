@@ -1,9 +1,8 @@
 // @ts-check
 // ProxyServer — main orchestrator that wires everything together
 
-import { loadWasmEngine } from './wasm/loader.js';
-import { WasmBridge } from './wasm/bridge.js';
-import { createWasmImports } from './wasm/imports.js';
+import { loadClassicEngine } from './protocol/classic-loader.js';
+import { ClassicBridge } from './protocol/classic-bridge.js';
 import { ConnectionPool } from './client/connection-pool.js';
 import { TcpListener } from './server/tcp-listener.js';
 import { ClientSession } from './server/client-session.js';
@@ -31,7 +30,7 @@ export class ProxyServer {
   #logger;
   /** @type {Metrics} */
   #metrics;
-  /** @type {WasmBridge | null} */
+  /** @type {ClassicBridge | null} */
   #bridge = null;
   /** @type {ConnectionPool | null} */
   #pool = null;
@@ -230,7 +229,7 @@ export class ProxyServer {
    * @param {PlcTarget} target
    */
   async #activateTargetRuntime(target) {
-    if (!this.#bridge) throw new Error('WASM engine not loaded');
+    if (!this.#bridge) throw new Error('Classic engine not loaded');
 
     this.#pool = new ConnectionPool(
       target,
@@ -335,7 +334,7 @@ export class ProxyServer {
       this.#passthroughRouter = new PassthroughRouter(this.#config, this.#logger, this.#metrics);
     }
     this.#startedAt = Date.now();
-    this.#logger.info('Starting S7Proxy...');
+    this.#logger.info('Starting S7Plus...');
 
     // 0. Load persisted structs from admin store (before PLC connection)
     if (this.#adminStore) {
@@ -346,12 +345,11 @@ export class ProxyServer {
       }
     }
 
-    // 1. Load WASM engine
+    // 1. Load classic protocol engine
     if (!this.#passthroughRouter) {
-      const wasmImports = createWasmImports(this.#logger);
-      const engine = await loadWasmEngine(wasmImports);
-      this.#bridge = new WasmBridge(engine);
-      this.#logger.info('WASM engine loaded');
+      const engine = await loadClassicEngine();
+      this.#bridge = new ClassicBridge(engine);
+      this.#logger.info('Classic protocol engine loaded');
     }
 
     // 2. Connection pool (first target only for now)
@@ -468,7 +466,7 @@ export class ProxyServer {
       }
     }
 
-    this.#logger.info('S7Proxy started');
+    this.#logger.info('S7Plus started');
     this.#installSignalHandlers();
   }
 
@@ -476,7 +474,7 @@ export class ProxyServer {
     if (this.#stopPromise) return this.#stopPromise;
 
     this.#stopPromise = (async () => {
-      this.#logger.info('Shutting down S7Proxy...');
+      this.#logger.info('Shutting down S7Plus...');
 
       this.#adminWs?.stop();
       this.#adminWs = null;
@@ -505,7 +503,7 @@ export class ProxyServer {
       }
       this.#signalHandlersInstalled = false;
 
-      this.#logger.info('S7Proxy stopped');
+      this.#logger.info('S7Plus stopped');
     })();
 
     return this.#stopPromise;

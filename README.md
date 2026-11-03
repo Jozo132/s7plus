@@ -1,11 +1,11 @@
-# S7Proxy
+# S7Plus
 
 Node.js proxy and client library for Siemens S7 PLCs, with managed protocol clients
 and an explicit transparent forwarding mode:
 
 | Path | Use It For | Boundaries |
 | --- | --- | --- |
-| Classic S7Comm | TCP proxying, connection pools/failover, polling DAQ, structured DB reads/writes, REST/WebSocket services and a snap7-compatible subset. | AssemblyScript WASM protocol engine; requires compatible PLC configuration and known addresses/layouts. |
+| Classic S7Comm | TCP proxying, connection pools/failover, polling DAQ, structured DB reads/writes, REST/WebSocket services and a snap7-compatible subset. | JavaScript protocol engine; requires compatible PLC configuration and known addresses/layouts. |
 | Transparent S7Comm/Plus | One-to-one TCP pass-through of original COTP, classic/Plus messages and optional end-to-end TLS. | Set `listen.mode: "passthrough"`. No TLS termination, protocol-operation inspection, pooling or session migration. |
 | Native S7CommPlus | Experimental symbolic DB/I/Q/M discovery, typed reads, bounded diagnostic snapshots and restricted native program-content extraction. | Separate client, not the proxy/DAQ/REST backend. Read-only by default; CPU RUN requires explicit per-call confirmation. Live Plus subscriptions are not enabled. |
 
@@ -25,12 +25,11 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 - [WebSocket API](#websocket-api)
 - [Development](#development)
 - [Project Structure](#project-structure)
-- [Recent Updates](#recent-updates)
 - [License](#license)
 
 ## Features
 
-- **WASM protocol engine** — TPKT / COTP / S7Comm PDU serialization compiled from AssemblyScript for near-native performance
+- **JavaScript protocol engine** — TPKT / COTP / S7Comm framing and PDU serialization using Node.js Buffers
 - **Connection pooling** — multiple PLC connections with automatic health checks and failover/failback
 - **Data acquisition (DAQ)** - classic S7Comm polling subscriptions with scan groups, read coalescing, priority queues and caching; not native Plus push notifications
 - **Structured DB access** — define PLC data block layouts, read/write as plain JS objects with automatic encode/decode
@@ -44,16 +43,18 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 ## Install
 
 ```bash
-npm install s7proxy
+npm install s7plus
 ```
 
-Current release: **0.4.8**. See [Recent Updates](#recent-updates) for changes.
+The local source is prepared as **0.5.0**; `s7plus` has not yet been published.
+The previously published package is `s7proxy` 0.4.8. The `s7proxy` CLI remains
+an alias, and existing `S7PROXY_*` configuration variables remain supported.
+See [the changelog](CHANGELOG.md) and [feature comparison](docs/FEATURE_COMPARISON.md).
 
 Requires Node.js >= 20.
 
 Development and current test tooling require Node.js 22.12+; see
-[Development](#development). The library is ESM. WASM is used by managed classic
-S7Comm; transparent forwarding and the separate native Plus client do not load it.
+[Development](#development). The library is ESM and requires no separate protocol binary.
 
 ## Quick Start
 
@@ -67,13 +68,13 @@ do not automatically use the Plus client.
 
 ```bash
 # Start with default config
-npx s7proxy
+npx s7plus
 
 # Start with custom config
-npx s7proxy config/my-plc.json
+npx s7plus config/my-plc.json
 
 # Override bind address and ports from the CLI
-npx s7proxy config/my-plc.json --host 127.0.0.1 --port 1102 --web-host 127.0.0.1 --web-port 8081
+npx s7plus config/my-plc.json --host 127.0.0.1 --port 1102 --web-host 127.0.0.1 --web-port 8081
 ```
 
 ### Transparent S7Comm/Plus Forwarding
@@ -99,9 +100,9 @@ Example configuration for an explicitly authorized target:
 }
 ```
 
-Run with `npx s7proxy config/my-plc.json`, then point the existing client at the
+Run with `npx s7plus config/my-plc.json`, then point the existing client at the
 proxy's address/port. The omitted/default mode is `classic`; `passthrough` skips
-the classic connection pool, health probes, WASM and polling DAQ. If web services
+the classic connection pool, health probes and polling DAQ. If web services
 are enabled, they do not gain a Plus DAQ backend.
 
 **TLS remains end-to-end between client and PLC.** No proxy certificate, decryption
@@ -139,7 +140,7 @@ not been hardware-qualified by those tests.
 ### As A Library
 
 ```js
-import { ProxyServer, loadConfig } from 's7proxy';
+import { ProxyServer, loadConfig } from 's7plus';
 
 const config = loadConfig('./config/default.json');
 const server = new ProxyServer(config);
@@ -184,12 +185,11 @@ await server.stop();
 
 ```js
 import {
-  PlcConnection, WasmBridge,
-  loadWasmEngine, createWasmImports, createLogger,
-} from 's7proxy';
+  PlcConnection, ClassicBridge, loadClassicEngine, createLogger,
+} from 's7plus';
 
-const engine = await loadWasmEngine(createWasmImports());
-const bridge = new WasmBridge(engine);
+const engine = await loadClassicEngine();
+const bridge = new ClassicBridge(engine);
 const logger = createLogger();
 const conn = new PlcConnection(
   'plc1-0', 'plc1', { ip: '192.168.1.10', rack: 0, slot: 1 },
@@ -231,7 +231,7 @@ await conn.disconnect();
 ### snap7-Compatible Client
 
 ```js
-import { S7Client } from 's7proxy';
+import { S7Client } from 's7plus';
 
 const client = new S7Client();
 client.ConnectTo('192.168.1.10', 0, 1, (err) => {
@@ -249,10 +249,10 @@ client.ConnectTo('192.168.1.10', 0, 1, (err) => {
 
 ```js
 import { Worker } from 'node:worker_threads';
-import { loadConfig } from 's7proxy';
+import { loadConfig } from 's7plus';
 
 const config = loadConfig('./config/my-plc.json');
-const worker = new Worker(new URL(import.meta.resolve('s7proxy/worker')), {
+const worker = new Worker(new URL(import.meta.resolve('s7plus/worker')), {
   workerData: { config, autoStart: true },
 });
 
@@ -272,7 +272,7 @@ Configuration is loaded from JSON. For simple deployments, `S7PROXY_CONFIG` can 
 CLI flags can override both environment variables and config file values:
 
 ```bash
-npx s7proxy [config-path] [options]
+npx s7plus [config-path] [options]
 
 Options:
   --host, --ip <host>    Override listen.ip
@@ -356,7 +356,7 @@ without providing native decoding, acquisition or a public subscription API.
 | Session setup | `connect()`, `disconnect()`, `report`; [security](#security-and-sessions) | Explicit TLS or supported legacy profile; no automatic reconnect or downgrade. |
 | DB/type discovery | `listDataBlocks()`, `getBlockMetadata()`, `getTypeInfo()`, `listBlockMembers()`; [symbol discovery](#native-symbol-discovery) | Bounded, session-cached metadata; not proof of running program revision. |
 | Process-area discovery | `getAreaMetadata()`, `listAreaMembers()`; [I/Q/M](#iqm-exploration) | Native symbolic descriptors; not fabricated absolute addresses. |
-| Values | `readMember()`, `readMembers()`, `readSymbol()`, `readSymbolic()`; [batch reads](#batch-value-reads) | RUN required; discovered member descriptors belong to one client session. |
+| Values | `readMember()`, `readMembers()`, `pollMembers()`, `readSymbol()`, `readSymbolic()`; [batch reads](#batch-value-reads) | RUN required; discovered member descriptors belong to one client session. |
 | CPU/communication snapshots | `readCpuState()`, `readCommunicationResources()`; [resources](#communication-resources) | Fresh bounded reads; resource counts do not establish safe connection capacity. |
 | Alarm snapshot | `readActiveAlarms()`; [alarms](#current-alarm-diagnostics) | Current/update-relevant service, not diagnostic history or acknowledgement. |
 | Program metadata | `listProgramBlocks()`, `readProgramEventMetadata()`, `explore()`; [events](#native-software-event-metadata) | Native identities, attributes and relations; not executable equivalence or execution history. |
@@ -487,7 +487,7 @@ those specific runs, not the current defaults.
 
 ```js
 import { readFile } from 'node:fs/promises';
-import { S7CommPlusClient } from 's7proxy';
+import { S7CommPlusClient } from 's7plus';
 
 const host = process.env.PLC_HOST;
 if (!host) throw new Error('Configure an authorized PLC target first');
@@ -619,6 +619,12 @@ responses, integrity/correlation failures, timeouts and transport errors remain
 fatal and stop the session. An insufficient remaining request budget rejects the
 whole plan before its first request.
 
+`CHAR` is returned as a Latin-1 character and `WCHAR` as one non-surrogate
+UTF-16 code unit. `DATE` is returned as days since 1990-01-01 and
+`TIME_OF_DAY` as milliseconds since midnight, with units in `representation`.
+These mappings have synthetic wire tests but are not hardware-qualified for
+every PLC and firmware. Unsupported aggregate layouts are not inferred.
+
 `readMembers(members, { maxItems: 48 })` explicitly raises the per-request item
 ceiling for a separately qualified target; accepted values are 1..64 and the
 default stays 32. The 900-byte request ceiling may split batches earlier. The
@@ -661,37 +667,28 @@ one outstanding request per client. Lower pacing must be qualified against PLC
 load and latency, not enabled by removing safety limits. The default 12-request,
 60-second session remains a bounded acquisition, not an unlimited DAQ service.
 
-An authorized TLS test inventoried 96 DBs and read all 1109 discovered leaf values,
-including 15 STRINGs, in 35 cross-DB requests per scan. Values came from 95 DBs;
-one inventoried DB lacked complete member-name metadata and could not be read.
-Three scans at 10 ms read
-pacing took 2.75..2.79 seconds each (397..404 values/s); cold discovery took about
-35 seconds separately. The PLC remained RUN and certificate trust was explicitly
-unverified. These measurements do not establish safe load on other controllers,
-complete program coverage or restorable backup capability. Exact target details,
-per-DB values and Markdown reports remain under gitignored `experimentation/`.
+Worst-case STRING capacity estimates are allocation bounds, not measurements of
+actual reply length. Hardware observations do not establish a universal item
+limit, safe PLC load, complete program coverage or backup capability.
 
-A subsequent single-session qualification reused the same 96-DB structure and
-1109 readable values. Retrieving every expanded structure from cache took 55 ms
-and zero PLC requests, versus about 35 seconds for initial discovery. Three
-32-item scans averaged 408 values/s in 35 requests each; three 48-item scans
-averaged 474 values/s in 24 requests each, a 16.3% improvement. The subsequent
-64-item request was rejected and the session disconnected without retry. RUN
-was confirmed after each successful scan, not after that rejection. Coverage
-remained 95 readable DBs with one incomplete member-name metadata result;
-certificate trust remained unverified. These results do not qualify a universal
-item limit or establish PLC load safety.
+For explicitly bounded polling of already discovered members:
 
-An ordering comparison then ran five interleaved scans each with input order,
-numeric DB RID/LID order, and response-size balancing. All scans read the same
-1109 values in 24 requests, with RUN confirmed between scans and at completion.
-Aggregate throughput was 477 values/s for input order, 472 for RID ordering and
-474 for balancing. All 360 read replies used a single inbound TPKT frame, so
-the predicted fragmentation bottleneck was absent. The small differences do
-not establish a meaningful ordering advantage. The production planner retains
-input order; the ordering prototype and exact evidence remain only in ignored
-experimentation, not the packaged library. Worst-case STRING capacity estimates
-are allocation bounds, not measurements of actual reply length.
+```js
+const controller = new AbortController();
+for await (const values of plc.pollMembers(members, {
+  intervalMs: 1000, maxCycles: 10, maxItems: 32, signal: controller.signal,
+})) {
+  console.log(values.map(value => value.observation));
+}
+```
+
+`pollMembers()` starts only when iterated, reads one batch plan at a time, and
+waits at least `intervalMs` after the consumer requests the next cycle. Both
+`intervalMs` (10..60000 ms) and `maxCycles` (1..100000) are required. Stopping
+iteration or aborting the signal prevents later cycles; an in-flight read is
+not interrupted by that signal. Session request, pacing, byte and duration
+limits still apply. Polling is not PLC push or a scan-synchronous atomic snapshot,
+and it does not reconnect or integrate with the classic REST/WebSocket DAQ.
 
 `readMember()` accepts only readable descriptors discovered by that client.
 It checks the returned wire datatype and retains the raw value, request/response
@@ -753,14 +750,8 @@ descriptors from another session are rejected.
 Metadata exploration is allowed in RUN or STOP. Process-value reads require RUN;
 no mode change or process write is issued. Results are defensively cloned and
 cached only within this client session, not continuously revision-refreshed.
-The portal and benchmark lane selector remain DB-only. In addition to loopback
-tests, one bounded CPU1212C V4.5 run discovered 2 input, 8 output and 14 marker
-tags and obtained 33 GOOD BOOL/BYTE observations through batch, scalar,
-qualified-name and mixed-area reads. The historical certificate fingerprint
-matched, but TLS remained unverified. RUN was confirmed before disconnect;
-a post-close ECONNRESET was retained as a teardown warning. No process writes,
-mode changes or retries were issued. This is scoped functional evidence, not
-general datatype, throughput or scan-synchronous qualification.
+The portal and benchmark lane selector remain DB-only. Limited hardware reads
+do not establish general datatype, throughput or scan-synchronous qualification.
 
 `disconnect()` cancels pending and queued calls with `DISCONNECTED`. An
 `ECONNRESET` received after explicit disconnect begins is retained separately
@@ -801,14 +792,6 @@ remain `UNKNOWN`; subscription capacity is not TCP/HMI connection capacity.
 No batch size, software connection budget or sampling rate is changed
 automatically, and reading a write limit does not enable writes.
 
-A bounded CPU1212C V4.5 lab run returned all eight counters: item limits 50/50,
-subscriptions maximum/free 40/40, attributes 400/400 and subscription memory
-102400/102400 (unit unqualified). Seven total session requests completed, final
-state RUN, read-only and disconnected. Historical fingerprint/identity matched
-but TLS remained unverified. A late reset was retained as `teardownWarning`,
-with no acquisition failure. This does not establish a connection ceiling or
-qualify subscriptions, actual write limits or general resource-unit semantics.
-
 <a id="native-current-alarm-diagnostics"></a>
 
 ### Current Alarm Diagnostics
@@ -843,12 +826,8 @@ diagnostic buffer**. An empty response does not prove a fault-free history or
 coverage of every CPU/system diagnostic source. Alarm subscriptions, fault-buffer
 history and CPU cycle/load diagnostics remain unimplemented.
 
-A bounded CPU1212C V4.5 lab query succeeded and returned zero alarm records.
-Seven total requests completed; final state RUN, read-only and disconnected.
-TLS remained unverified despite matching the historical fingerprint; the late
-reset remained a teardown warning with no acquisition failure. This qualifies
-the empty-query path on that CPU, not real positive alarm/text/timestamp decoding;
-positive records and partial cases currently have verified-TLS loopback coverage.
+Positive alarm records and partial cases currently have verified-TLS loopback
+coverage, not hardware qualification.
 
 ### Native software-event metadata
 
@@ -880,25 +859,8 @@ The result includes raw evidence, inventory, controller identity, receipt times,
 identity matches, not a decoded meaning for every relation ID. Event names do
 not establish active faults or prove the corresponding code was executed.
 
-A bounded CPU1212C V4.5 lab read recovered the observed `SWEvents` container and
-12 software-event objects. `ProgramCycle` (RID 96) returned relation ID 2057 to
-`0x8A320001`, independently matching OB1 `Main` in the same session's inventory.
-The other 11 event objects returned no relations. This is native program/event
-metadata, not a PLC execution trace, fault history or runtime revision proof.
-
-The observed `RuntimeMeters` object (RID 86/class 7825) returned 14 attributes,
-including two native structs. Numeric fields were zero and the Boolean field was
-false. Their meanings, units and activation requirements are not qualified; this
-is not a typed CPU cycle/load API. The identity-checked nine-request session ended
-in RUN and disconnected, with `report.failure: null` and a late ECONNRESET
-teardown warning. TLS remained unverified. Program-content security gates below
-are unchanged. See the parent runtime report for retained raw evidence.
-
-The structured API was separately qualified on that lab target: eight requests,
-12 events and the same exact OB1 link, final RUN/read-only/disconnected, no main
-failure and the existing late reset warning. TLS remained unverified. This adds
-a usable metadata workflow, not a claim of novel protocol discovery or greater
-overall coverage than the reference libraries.
+Runtime-meter field meanings, units and activation requirements remain
+unqualified; this is not a typed CPU cycle/load API.
 
 ### Native program content as in-memory files
 
@@ -957,7 +919,7 @@ but do not fabricate files. Partial uploads return only the files obtained.
 
 The library does not write uploaded content, create backup directories, retain
 snapshots or choose a storage policy. Disk persistence/evidence helpers exist
-only in tests and are not exported or packaged. Existing configuration, WASM
+only in tests and are not exported or packaged. Existing configuration, engine
 loading, certificate loading and proxy behavior are unchanged.
 
 These artifacts are `BLOCK_CONTENT` and `SOFTWARE_UPLOAD`, not editable TIA
@@ -1010,7 +972,7 @@ STOP, reset, arbitrary values/addresses and generic writes remain denied.
 
 One isolated CPU 1212C, firmware V4.5, was observed transitioning STOP to RUN on
 2026-10-27, with RUN confirmed twice. This is not qualification of other CPU or
-security profiles; see the qualification report's CPU-start update.
+security profiles.
 
 ### Concurrent HMI Sessions
 
@@ -1022,8 +984,6 @@ value 1 caused a Multi-ES conflict with TIA Portal on the tested controller.
 Omitting that attribute allowed the PLC to return role 2 and permitted native
 DB/I/Q/M discovery and scalar reads while TIA remained connected. Do not restore
 the role-1 request or assume a role transition is required after discovery.
-See [TIA Portal coexistence and session roles](docs/S7_READ_ONLY_REPORT.md#tia-portal-coexistence-and-session-roles-2026-10-28)
-for the failure signature, evidence, cleanup behavior and qualification limits.
 
 Multiple clients can connect and issue requests in parallel to the same endpoint.
 The connection registry is scoped to this loaded module in one Node process and
@@ -1087,26 +1047,9 @@ increase with each session. Qualify load and real TIA online monitoring on the
 specific CPU/firmware before increasing production concurrency. Loopback tests
 do not establish those hardware guarantees.
 
-Historical plaintext CreateObject attempts were rejected; the numeric cause is
-not established. Subsequent authorized lab testing established verified
-TLS-over-COTP sessions, genuine RUN/protection replies, native DB/type metadata,
-and BOOL, INT and TIME reads. This does not qualify another controller or security
-profile, and no production retest is implied.
-An additional configured-target test on a CPU 1214C, firmware V4.5, established
-TLS 1.3 with explicit certificate bypass, discovered 96 DBs, and read one native
-BOOL with `GOOD` quality. That session used 10 requests and a 256-object budget,
-and completed in approximately 8.15 seconds. Its identity remained
-`TLS_UNVERIFIED`; it does not qualify every PLC firmware or authentication profile.
-Exact test harnesses and evidence live under gitignored `experimentation/`.
-An additional multi-controller run established process-value reads on twelve
-responding S7-1200 CPUs: nine legacy V4.4/V4.5 sessions and three TLS V4.5/V4.7
-sessions. Five other configured addresses did not answer TCP/102 within the
-bounded attempt; that does not prove they are offline. Captured inventories
-ranged from 17 to 314 DBs. The experiments used explicit budgets, up to 24 requests,
-512 objects and 1024 expanded members, and read one discovered process value per
-responding PLC. They do not prove every DB or datatype is readable.
-See [the evidence and implementation report](docs/S7_READ_ONLY_REPORT.md)
-and [reference licensing](THIRD_PARTY_NOTICES.md).
+Limited hardware reads on S7-1200 controllers do not qualify other controller or
+security profiles, every DB or datatype, or production load. See
+[reference licensing](THIRD_PARTY_NOTICES.md).
 
 ### Offline Data Notification Foundation
 
@@ -1196,7 +1139,7 @@ From this repository, with the authorized CA path and independently approved
 certificate SHA256 in `S7PLUS_TLS_CA` and `S7PLUS_TLS_CERT_SHA256`:
 
 ```bash
-node src/plus-benchmark.js --live --acknowledge-load --host 192.168.1.200 \
+node src/plus-benchmark.js --live --acknowledge-load --host "$PLC_HOST" \
   --tls --config examples/s7commplus-benchmark.json --output trace.ndjson
 ```
 
@@ -1417,9 +1360,6 @@ npm run check-types
 # Focused native subscription fixtures (offline only)
 npm test -- --configLoader runner test/unit/s7commplus.test.js -t 'offline owned subscription lifecycle|owned subscription receive routing'
 
-# Rebuild WASM engine
-npm run build:wasm
-
 # Dev mode with auto-reload
 npm run dev
 ```
@@ -1427,8 +1367,6 @@ npm run dev
 ## Project Structure
 
 ```
-assembly/        AssemblyScript WASM engine (TPKT, COTP, S7Comm)
-build/           Compiled s7engine.wasm
 config/          Default JSON configuration
 src/
   api/           REST + WebSocket server
@@ -1440,73 +1378,21 @@ src/
   protocol/      Classic codecs; s7commplus/ codecs, policy and offline lifecycle
   router/        S7Comm proxy routing
   server/        TCP listener, client sessions
-  wasm/          WASM loader, bridge, imports
 test/
   unit/          Unit tests
   integration/   Integration tests
   samples/       Real PLC sample scripts
 ```
 
-## Recent Updates
-
-### 0.4.8 (current source)
-
-- Add opt-in native Plus TLS certificate enrollment with `tls.trustOnFirstUse`, accepting unseen self-signed PLC certificates with a `console.warn` and persisting their public DER certificates atomically.
-- Default the trust store to the OS temporary directory under `s7proxy/certificates`; use `tls.trustStoreDir` for persistent or custom storage. Known certificates reconnect without another warning.
-- Reject changed certificates by default. Optional `tls.allowChangedCertificate: true` warns with both SHA-256 fingerprints, atomically replaces the stored certificate and continues communication. Expired and not-yet-valid certificates remain rejected.
-- Report enrolled connections as `TLS_TOFU`, retain observed fingerprints and record `ENROLLED`, `MATCHED` or `REPLACED` events. Strict CA/hostname/pin verification remains the default; enrollment is not independent identity verification, and accepting changes permits impersonation. Program extraction still requires verified TLS.
-- Add local TLS fixture coverage for default/custom stores, enrollment and reconnect warnings, changed-certificate rejection and replacement, and replacement-option validation.
-
-### 0.4.7
-
-- Add ClassicBlob range reads for archive-bound Standard DB members with `accessMode: 'CLASSIC_OFFSET'`. Require confirmed byte/bit offsets, supported scalar widths and ranges within the confirmed DB size; reject optimized layouts, inferred offsets and invalid or overlapping ranges. Cached bindings preserve this access mode without PLC rediscovery.
-- Return per-member `quality: 'MISMATCH'` observations for recoverable read rejections, omitted values and supported scalar datatype mismatches, including status, diagnostic text, expected datatype and actual wire type when available. Preserve successful values and keep the session usable; do not cast mismatched values to archive types.
-- Retry members individually after a rejected batch service or rejected/omitted batch items. Malformed responses, integrity/correlation failures, timeouts and transport errors remain fatal; request budgets still apply.
-- Require complete `GOOD` sample sets with native request timing in the Plus benchmark, with explicit diagnostics for mismatches or missing timing. Add fixture coverage for Standard DB offset reads, cached offset bindings, archive-qualified name reads and recoverable per-member failures.
-
-### 0.4.6
-
-- Add `bindCachedMembers(discovery)` to restore serialized DB and I/Q/M structure metadata into fresh session-owned descriptors without inventory, type queries or first-read rediscovery. Persistence and target/profile/scope isolation remain the caller's responsibility; S7Proxy does not provide database storage.
-- Validate exact DB/process-area RIDs, supported scalar software types and unique bounded LID addresses. Unreadable entries, including unresolved paths, remain unbound. Old session descriptors are still rejected.
-- Mark restored metadata as `PLC_CACHE` with an unverified revision. Binding time is not the original capture time, and successful typed reads do not prove that the PLC program is unchanged. No fallback exploration or writes are performed.
-- Add JSON round-trip and cross-session DB/I/Q/M fixture coverage, including reads without exploration and rejection of invalid identities.
-
-### 0.4.5
-
-- Add `bindArchiveMembers(block, members)` for locally parsed DB declarations, returning fresh session-owned descriptors without PLC inventory or metadata queries.
-- Require exact DB identity and unambiguous supported scalar LID addresses without fabricated native type identities. Archive bindings remain explicitly `ARCHIVE_UNVERIFIED`; refresh metadata after PLC program changes.
-
-### 0.4.4
-
-- Omit the explicit ServerSession.Role=1 request that caused Multi-ES conflicts with TIA Portal. Full DB/I/Q/M discovery and scalar reads succeeded on the tested controller with TIA connected; other firmware and reverse connection order remain unqualified.
-- Report requested and PLC-returned session roles separately from HMI transport identity, with regression coverage and coexistence troubleshooting documentation.
-
-### 0.4.3
-
-- Explicit `listen.mode: "passthrough"` preserves original COTP/S7Comm/Plus and optional end-to-end TLS over dedicated upstream sockets. No classic probes/pool/DAQ, TLS termination, retries or mid-session failover; connection filters and the production raw-forwarding gate remain enforced.
-- Fresh native communication-resource and current-alarm snapshots, plus structured software-event metadata with bounded native relations. Current alarms are not diagnostic history; event links are not execution or revision proof.
-- Single native receive dispatcher with per-message fragment evidence, strict V2 notification parsing, bounded delta queues and an offline owned lifecycle adapter. Finite credits, staleness, cancellation, cleanup and reconnect isolation are fixture-tested; live subscription wire operations remain disabled.
-- Independent native HMI sessions, bounded request queues and an explicit finite sampling benchmark. Neither local connection limits nor measured polling throughput establish safe PLC load or scan-synchronous capture.
-
-### 0.4.2
-
-- Native I/Q/M exploration through `getAreaMetadata({ type: 'I' | 'Q' | 'M' })` and `listAreaMembers(selector, { maxTypes, maxMembers })`. Actual native type references drive bounded expansion; readable descriptors work with existing scalar, batch and qualified-name reads and cannot be shared between sessions.
-- Cached DB inventories and expanded member structures within a client session, avoiding repeated inventory requests and structure expansion. Cached discoveries are isolated from caller mutations and preserve their original metadata receipt time. Per-block evidence retains the relevant object's attributes and response correlation instead of the entire inventory.
-- More efficient nested-type discovery using indexed lookups and a deduplicated traversal queue, with higher configurable object, depth, response, request and member limits. These are allocation ceilings, not hardware qualification or guarantees of complete discovery.
-- Bounded diagnostic history through `limits.maxDiagnosticEntries` (default `128`, maximum `4096`) for each observation/transcript collection. Transcript hex fields retain at most 1024 bytes per entry; reports are diagnostic samples, not guaranteed complete wire captures.
-- Cached, response-aware `readMembers()` plans default to 32 symbolic items per request, including members from different DBs. An explicit `maxItems` option supports bounded qualification up to 64; 48-item reads succeeded on the tested target, while its 64-item attempt was rejected. Linear address sizing replaces trial-encoding each growing batch; canonical outgoing checks, fresh integrity counters and HMACs remain active.
-- Qualified S7 `STRING` reads validate native byte-array capacity/length headers and preserve the original bytes, exposing a byte-preserving Latin-1 representation. Unsupported string layouts and WSTRING remain explicit rather than guessed.
-
-### 0.4.1
-
-- Separate object-count and nesting-depth limits in the native object decoder, with specific errors identifying which limit was exceeded.
-
-### 0.4.0
-
-- Explicit legacy S7-1200 SessionKey setup and activation, with HMAC-SHA256 verification of requests and response fragments. Legacy traffic is not encrypted and there is no automatic TLS downgrade.
-- Explicitly configured PLC hostnames/IPs and ports, optional certificate-validation bypass, TLS 1.2/1.3 negotiation, and a separate TLS handshake deadline. Strict certificate verification remains the default.
-- Improved compatibility with composite service-status replies and operation-specific latency checks. Authorized testing obtained one genuine process-value read from each of twelve responding S7-1200 CPUs; other families and security profiles remain unqualified.
-
 ## License
 
 MIT
+
+## Acknowledgments
+
+The native protocol implementation was informed by the MIT-licensed
+[gijzelaerr/s7commplus](https://github.com/gijzelaerr/s7commplus) and
+[HarpoS7](https://github.com/bonk-dev/HarpoS7) projects. Other public projects
+are used as technical references only. See [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+for source provenance, applicable license terms, and the distinction between
+incorporated material and references.

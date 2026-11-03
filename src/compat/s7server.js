@@ -1,12 +1,12 @@
 // @ts-check
-// Drop-in replacement for node-snap7 S7Server — backed by Node.js TCP + S7Proxy WASM engine
+// Drop-in replacement for node-snap7 S7Server — backed by Node.js TCP + the classic engine
 // Supports custom port via SetParam(S7Server.LocalPort, port) or StartTo(ip, callback)
 
 import { createServer } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { FrameAssembler } from '../protocol/frame-assembler.js';
-import { WasmBridge } from '../wasm/bridge.js';
-import { loadWasmEngine } from '../wasm/loader.js';
+import { ClassicBridge } from '../protocol/classic-bridge.js';
+import { loadClassicEngine } from '../protocol/classic-loader.js';
 import {
   TPKT_HEADER_SIZE, COTP_CR, COTP_DT, COTP_DR,
   S7_FN_SETUP_COMM, S7_FN_READ_VAR, S7_FN_WRITE_VAR,
@@ -117,7 +117,7 @@ export class S7Server extends EventEmitter {
 
   /** @type {import('node:net').Server | null} */
   #server = null;
-  /** @type {WasmBridge | null} */
+  /** @type {ClassicBridge | null} */
   #bridge = null;
   /** @type {number} */
   #status = S7Server.SrvStopped;
@@ -381,8 +381,8 @@ export class S7Server extends EventEmitter {
     if (this.#status === S7Server.SrvRunning) return;
 
     try {
-      const engine = await loadWasmEngine();
-      this.#bridge = new WasmBridge(engine);
+      const engine = await loadClassicEngine();
+      this.#bridge = new ClassicBridge(engine);
 
       await new Promise((resolve, reject) => {
         this.#server = createServer((socket) => this.#handleClient(socket));

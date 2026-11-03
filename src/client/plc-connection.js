@@ -5,7 +5,7 @@
 import { Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { FrameAssembler } from '../protocol/frame-assembler.js';
-import { WasmBridge } from '../wasm/bridge.js';
+import { ClassicBridge } from '../protocol/classic-bridge.js';
 import { assertClassicTarget } from '../protocol/production-policy.js';
 import { S7_DEFAULT_PORT, CONNTYPE_PG, calcTsap, DEFAULT_PDU_SIZE, DEFAULT_AMQ, COTP_CC, S7_FN_SETUP_COMM, S7_MSG_ACK } from '../protocol/constants.js';
 
@@ -25,7 +25,7 @@ export class PlcConnection extends EventEmitter {
   /** @type {Socket | null} */
   #socket = null;
   #frameAssembler = new FrameAssembler();
-  /** @type {WasmBridge} */
+  /** @type {ClassicBridge} */
   #bridge;
   /** @type {Logger} */
   #logger;
@@ -59,7 +59,7 @@ export class PlcConnection extends EventEmitter {
    * @param {string} id
    * @param {string} targetId
    * @param {PlcEndpoint} endpoint
-   * @param {WasmBridge} bridge
+   * @param {ClassicBridge} bridge
    * @param {Logger} logger
    * @param {number} [requestTimeoutMs=3000]
    */

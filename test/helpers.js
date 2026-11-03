@@ -1,10 +1,9 @@
 // @ts-check
-// Shared test helpers — boots demo server + WASM bridge for integration tests
+// Shared test helpers — boots demo server + classic bridge for integration tests
 
 import { startDemoServer } from './demo-server.js';
-import { loadWasmEngine, resetWasmCache } from '../src/wasm/loader.js';
-import { WasmBridge } from '../src/wasm/bridge.js';
-import { createWasmImports } from '../src/wasm/imports.js';
+import { loadClassicEngine, resetClassicEngineCache } from '../src/protocol/classic-loader.js';
+import { ClassicBridge } from '../src/protocol/classic-bridge.js';
 import { createLogger } from '../src/logging/logger.js';
 
 /** @typedef {import('./demo-server.js').DemoServer} DemoServer */
@@ -13,7 +12,7 @@ import { createLogger } from '../src/logging/logger.js';
 /**
  * @typedef {Object} TestContext
  * @property {DemoServer} demo
- * @property {WasmBridge} bridge
+ * @property {ClassicBridge} bridge
  * @property {import('../src/logging/logger.js').Logger} logger
  */
 
@@ -28,7 +27,7 @@ export async function startIntegrationDemoServer(options = {}) {
 }
 
 /**
- * Set up the demo PLC server and WASM bridge. Reuses a single instance
+ * Set up the demo PLC server and classic bridge. Reuses a single instance
  * across all tests in the same vitest worker.
  * @param {import('./demo-server.js').DemoServerOptions} [options]
  * @returns {Promise<TestContext>}
@@ -38,9 +37,8 @@ export async function setup(options = {}) {
 
   const logger = createLogger({ level: 'silent' });
   const demo = await startIntegrationDemoServer(options);
-  const imports = createWasmImports(logger);
-  const engine = await loadWasmEngine(imports);
-  const bridge = new WasmBridge(engine);
+  const engine = await loadClassicEngine();
+  const bridge = new ClassicBridge(engine);
 
   ctx = { demo, bridge, logger };
   return ctx;
@@ -52,6 +50,6 @@ export async function setup(options = {}) {
 export async function teardown() {
   if (!ctx) return;
   ctx.demo.stop();
-  resetWasmCache();
+  resetClassicEngineCache();
   ctx = null;
 }

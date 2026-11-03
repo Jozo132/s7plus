@@ -1,10 +1,10 @@
 // @ts-check
-// Drop-in replacement for node-snap7 S7Client — backed by S7Proxy's WASM engine + PlcConnection
+// Drop-in replacement for node-snap7 S7Client — backed by the classic engine + PlcConnection
 
 import { EventEmitter } from 'node:events';
 import { PlcConnection } from '../client/plc-connection.js';
-import { WasmBridge } from '../wasm/bridge.js';
-import { loadWasmEngine, resetWasmCache } from '../wasm/loader.js';
+import { ClassicBridge } from '../protocol/classic-bridge.js';
+import { loadClassicEngine, resetClassicEngineCache } from '../protocol/classic-loader.js';
 import { createLogger } from '../logging/logger.js';
 import {
   S7AreaPE, S7AreaPA, S7AreaMK, S7AreaDB, S7AreaCT, S7AreaTM,
@@ -185,7 +185,7 @@ export class S7Client extends EventEmitter {
   static SrcTSap = 9;
   static PDURequest = 10;
 
-  /** @type {WasmBridge | null} */
+  /** @type {ClassicBridge | null} */
   #bridge = null;
   /** @type {PlcConnection | null} */
   #conn = null;
@@ -696,8 +696,8 @@ export class S7Client extends EventEmitter {
     try {
       await disconnected;
       if (!this.#bridge) {
-        const engine = await loadWasmEngine();
-        this.#bridge = new WasmBridge(engine);
+        const engine = await loadClassicEngine();
+        this.#bridge = new ClassicBridge(engine);
       }
       if (generation !== this.#connectionGeneration) throw new Error('Connection attempt cancelled');
 
@@ -816,7 +816,7 @@ export class S7Client extends EventEmitter {
       /** @type {MultiVarReadResult[]} */
       const results = [];
 
-      // Execute each item as an individual read (multi-read in WASM doesn't return data in a single frame)
+      // Execute each item as an individual read.
       for (const item of items) {
         try {
           const data = await this.#readAreaAsync(item.Area, item.DBNumber, item.Start, item.Amount, item.WordLen);
