@@ -137,8 +137,13 @@ owned-session address 323, then V3 HMAC-authenticated requests and fragments.
 The only new SetVariable envelope is that fixed session activation; it is not
 a process write or CPU operating-mode command. Negative statuses, malformed
 responses, unknown keys, bad HMACs/counters and version downgrades stop acquisition.
-Only three exact empty session-notification forms are recognized, with a limit
+Only four exact empty session-notification forms are recognized, with a limit
 of sixteen per session; error-bearing SystemEvents remain fatal.
+
+The fourth form is the exact empty `0x031C` frame observed on a CPU 1214C V4.5
+during read-only DB discovery. It carries no error payload; the pinned MIT
+reference's SystemEvent decoder classifies such 16-byte messages as non-fatal.
+Unknown event codes, non-empty payloads and excessive events still stop acquisition.
 
 Compatibility fixes include signed-low-word composite service-result decoding,
 separate activation/read counter layouts, generic V2 protection-read payloads,
