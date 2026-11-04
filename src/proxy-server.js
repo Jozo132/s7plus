@@ -17,6 +17,8 @@ import { StructManager } from './protocol/struct-manager.js';
 import { registerAdminRoutes } from './admin/routes.js';
 import { AdminAuth } from './admin/auth.js';
 import { AdminWsServer } from './admin/admin-ws.js';
+import { resolve } from 'node:path';
+import { packageRoot } from './package-root.js';
 
 /** @import { S7PlusConfig, PlcTarget } from './protocol/types.js' */
 /** @import { S7StructDef, S7Value } from './protocol/db-struct.js' */
@@ -383,10 +385,7 @@ export class ProxyServer {
       if (this.#adminStore) {
         const app = this.#restServer.server;
 
-        const { resolve, dirname } = await import('node:path');
-        const { fileURLToPath } = await import('node:url');
-        const __dirname = dirname(fileURLToPath(import.meta.url));
-        app.serveStatic('/admin/', resolve(__dirname, '..', 'public'));
+        app.serveStatic('/admin/', resolve(packageRoot, 'public'));
         // Redirect /admin to /admin/
         app.get('/admin', (_, reply) => reply.redirect('/admin/'));
 

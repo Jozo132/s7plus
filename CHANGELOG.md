@@ -2,6 +2,8 @@
 
 ## 0.5.0 (unreleased on npm)
 
+- Provide matching ESM and CommonJS entry points with generated TypeScript
+  declarations and shared runtime exports.
 - Rename the package, CLI, configuration variables, persistence paths and metrics
   to `s7plus`; the previous names are no longer supported.
 - Document the current protocol feature boundaries and reference implementations.

@@ -6,22 +6,46 @@
     "type": "git",
     "url": "git+https://github.com/Jozo132/s7plus.git"
   },
-  "keywords": ["siemens", "s7", "s7comm", "s7commplus", "plc", "scada"],
+  "keywords": [
+    "siemens",
+    "s7",
+    "s7comm",
+    "s7commplus",
+    "plc",
+    "scada"
+  ],
   "type": "module",
   "exports": {
     ".": {
-      "import": "./src/lib.js"
+      "import": {
+        "types": "./dist/types/lib.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/types-cjs/lib.d.ts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./worker": {
-      "import": "./src/worker.js"
+      "import": {
+        "types": "./dist/types/worker.d.ts",
+        "default": "./src/worker.js"
+      },
+      "require": {
+        "types": "./dist/types-cjs/worker.d.ts",
+        "default": "./dist/worker.cjs"
+      }
     }
   },
-  "main": "./src/lib.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/types/lib.d.ts",
   "bin": {
     "s7plus": "src/index.js"
   },
   "files": [
     "src/",
+    "dist/",
     "public/",
     "config/default.json",
     "README.md",
@@ -30,6 +54,8 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
+    "build": "node scripts/build.js",
+    "prepare": "npm run build",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "vitest run",
@@ -45,11 +71,12 @@
   "license": "MIT",
   "dependencies": {
     "@noble/hashes": "1.8.0",
+    "@types/node": "^20.19.43",
+    "@types/ws": "^8.18.2",
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.12",
     "node-snap7": "^1.0.9",
     "typescript": "^5.9.3",
     "vitest": "^4.1.4"

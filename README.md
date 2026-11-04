@@ -53,7 +53,21 @@ See [the changelog](CHANGELOG.md) and [feature comparison](docs/FEATURE_COMPARIS
 Requires Node.js >= 20.
 
 Development and current test tooling require Node.js 22.12+; see
-[Development](#development). The library is ESM and requires no separate protocol binary.
+[Development](#development). The package supports ESM and CommonJS with TypeScript
+declarations and requires no separate protocol binary. It targets Node.js, not browsers.
+
+```js
+// ESM JavaScript or TypeScript
+import { S7CommPlusClient } from 's7plus';
+```
+
+```js
+// CommonJS JavaScript or TypeScript
+const { S7CommPlusClient } = require('s7plus');
+```
+
+TypeScript's NodeNext/Node16 resolution selects declarations for the matching
+module format. Both formats share the same runtime exports within a process.
 
 ## Quick Start
 
@@ -1362,6 +1376,9 @@ npm run test:integration
 
 # Type checking (JSDoc)
 npm run check-types
+
+# Build CommonJS, ESM and TypeScript declarations
+npm run build
 
 # Focused native subscription fixtures (offline only)
 npm test -- --configLoader runner test/unit/s7commplus.test.js -t 'offline owned subscription lifecycle|owned subscription receive routing'

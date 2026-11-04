@@ -1,12 +1,14 @@
 // @ts-check
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
+import { resolve } from 'node:path';
+import { packageRoot } from '../package-root.js';
 
 export function getProductionHost() {
   let host = process.env.S7PLUS_PRODUCTION_HOST;
   if (host === undefined) {
     try {
-      const config = JSON.parse(readFileSync(process.env.S7PLUS_TARGET_CONFIG ?? new URL('../../.s7plus-target.local.json', import.meta.url), 'utf8'));
+      const config = JSON.parse(readFileSync(process.env.S7PLUS_TARGET_CONFIG ?? resolve(packageRoot, '.s7plus-target.local.json'), 'utf8'));
       host = config.host;
     } catch (error) {
       if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return undefined;
