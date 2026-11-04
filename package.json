@@ -48,6 +48,8 @@
     "dist/",
     "public/",
     "config/default.json",
+    "config/s7commplus-benchmark.json",
+    "examples/",
     "README.md",
     "CHANGELOG.md",
     "docs/",

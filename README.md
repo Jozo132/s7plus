@@ -59,11 +59,13 @@ declarations and requires no separate protocol binary. It targets Node.js, not b
 ```js
 // ESM JavaScript or TypeScript
 import { S7CommPlusClient } from 's7plus';
+const plc = new S7CommPlusClient({ host: '192.168.1.200', securityMode: 'tls', tls: { trustOnFirstUse: true } });
 ```
 
 ```js
 // CommonJS JavaScript or TypeScript
 const { S7CommPlusClient } = require('s7plus');
+const plc = new S7CommPlusClient({ host: '192.168.1.200', securityMode: 'tls', tls: { trustOnFirstUse: true } });
 ```
 
 TypeScript's NodeNext/Node16 resolution selects declarations for the matching
@@ -76,6 +78,29 @@ Managed examples use **classic S7Comm**. For transparent Plus transport, see
 [Native S7CommPlus](#native-s7commplus) and its
 [discovery example](#native-symbol-discovery). Classic proxy, DAQ and web services
 do not automatically use the Plus client.
+
+Standalone examples for the lab PLC at `192.168.1.200`:
+
+| Use case | Example |
+| --- | --- |
+| Classic connection and structs | [lab-s7comm-direct.js](examples/lab-s7comm-direct.js), [lab-s7comm-snap7.js](examples/lab-s7comm-snap7.js), [lab-s7comm-struct.js](examples/lab-s7comm-struct.js) |
+| Classic proxy and APIs | [lab-s7comm-proxy.js](examples/lab-s7comm-proxy.js), [lab-s7comm-rest.js](examples/lab-s7comm-rest.js), [lab-s7comm-websocket.js](examples/lab-s7comm-websocket.js), [lab-s7comm-worker.js](examples/lab-s7comm-worker.js) |
+| Transparent forwarding | [lab-proxy-passthrough.js](examples/lab-proxy-passthrough.js) |
+| Native discovery and reads | [lab-s7commplus-read.js](examples/lab-s7commplus-read.js) |
+| Polling and push | [lab-s7commplus-poll.js](examples/lab-s7commplus-poll.js), [lab-s7commplus-subscription.js](examples/lab-s7commplus-subscription.js) |
+| I/Q/M and concurrent sessions | [lab-s7commplus-areas.js](examples/lab-s7commplus-areas.js), [lab-s7commplus-concurrent.js](examples/lab-s7commplus-concurrent.js) |
+| CPU/resources, alarms and program events | [lab-s7commplus-diagnostics.js](examples/lab-s7commplus-diagnostics.js), [lab-s7commplus-alarms.js](examples/lab-s7commplus-alarms.js), [lab-s7commplus-events.js](examples/lab-s7commplus-events.js) |
+| JavaScript, CommonJS and TypeScript | [lab-s7commplus-read.js](examples/lab-s7commplus-read.js), [lab-s7commplus-commonjs.cjs](examples/lab-s7commplus-commonjs.cjs), [lab-s7commplus-typescript.ts](examples/lab-s7commplus-typescript.ts), [lab-s7commplus-typescript.mts](examples/lab-s7commplus-typescript.mts) |
+| Scratch write, program content and CPU start | [lab-s7commplus-write.js](examples/lab-s7commplus-write.js), [lab-s7commplus-upload.js](examples/lab-s7commplus-upload.js), [lab-s7commplus-cpu-start.js](examples/lab-s7commplus-cpu-start.js) |
+
+Run JavaScript examples from the repository root after installing dependencies
+and running `npm run build`, for example `node examples/lab-s7commplus-read.js`. REST and
+WebSocket examples require the local classic proxy. Classic access and example
+DB offsets are not qualified on this PLC; the `Motor` DB10 layout is illustrative.
+Trust-on-first-use does not authenticate the first connection. The upload example
+includes the observed public lab certificate and pin; verify them independently
+before trusting them. The write and CPU-start scripts change PLC state and must
+only be run with explicit authorization; the write attempts to restore its value.
 
 ### Standalone (CLI)
 
@@ -105,7 +130,7 @@ Example configuration for an explicitly authorized target:
   "listen": { "ip": "127.0.0.1", "port": 1102, "mode": "passthrough" },
   "targets": [{
     "id": "plc1",
-    "primary": { "ip": "192.168.1.10", "port": 102, "rack": 0, "slot": 1 },
+    "primary": { "ip": "192.168.1.200", "port": 102, "rack": 0, "slot": 1 },
     "maxConnections": 4,
     "requestTimeoutMs": 3000
   }],
@@ -152,10 +177,15 @@ not been hardware-qualified by those tests.
 
 ### As A Library
 
+This classic example targets the lab PLC at `192.168.1.200`. Its `Motor` DB
+layout is illustrative, not the lab's discovered optimized DB layout. Classic
+access and writes require a compatible PLC configuration and a verified layout.
+
 ```js
 import { ProxyServer, loadConfig } from 's7plus';
 
 const config = loadConfig('./config/default.json');
+config.targets = [{ id: 'plc1', primary: { ip: '192.168.1.200', rack: 0, slot: 1 }, maxConnections: 2 }];
 const server = new ProxyServer(config);
 
 // Register struct definitions before or after start
@@ -181,8 +211,7 @@ const values = await server.readStruct('Motor');
 const partial = await server.readStruct('Motor', ['speed', 'running']);
 // { speed: 1200.5, running: true }
 
-// Write → pass an object (partial writes supported)
-await server.writeStruct('Motor', { speed: 1500, setpoint: 1800 });
+// For authorized writes, server.writeStruct() accepts partial objects.
 
 // Subscribe for periodic decoded updates
 server.structs.on('struct:data:Motor', (values) => {
@@ -196,6 +225,10 @@ await server.stop();
 
 ### Direct PLC Connection
 
+This is classic S7Comm, not a native Plus connection. It requires classic access
+and a standard DB1 with the selected offsets; the lab's optimized DB1 cannot be
+assumed to support these offsets.
+
 ```js
 import {
   PlcConnection, ClassicBridge, loadClassicEngine, createLogger,
@@ -205,7 +238,7 @@ const engine = await loadClassicEngine();
 const bridge = new ClassicBridge(engine);
 const logger = createLogger();
 const conn = new PlcConnection(
-  'plc1-0', 'plc1', { ip: '192.168.1.10', rack: 0, slot: 1 },
+  'plc1-0', 'plc1', { ip: '192.168.1.200', rack: 0, slot: 1 },
   bridge, logger, 3000,
 );
 conn.on('error', (err) => logger.error({ err }, 'PLC socket error'));
@@ -243,11 +276,14 @@ await conn.disconnect();
 
 ### snap7-Compatible Client
 
+This classic path has the same access and standard-DB requirements as the direct
+connection example; it is not an alternative native Plus API.
+
 ```js
 import { S7Client } from 's7plus';
 
 const client = new S7Client();
-client.ConnectTo('192.168.1.10', 0, 1, (err) => {
+client.ConnectTo('192.168.1.200', 0, 1, (err) => {
   if (err) throw err;
 
   // Read 10 bytes from DB1 starting at offset 0
@@ -264,7 +300,8 @@ client.ConnectTo('192.168.1.10', 0, 1, (err) => {
 import { Worker } from 'node:worker_threads';
 import { loadConfig } from 's7plus';
 
-const config = loadConfig('./config/my-plc.json');
+const config = loadConfig('./config/default.json');
+config.targets = [{ id: 'plc1', primary: { ip: '192.168.1.200', rack: 0, slot: 1 }, maxConnections: 2 }];
 const worker = new Worker(new URL(import.meta.resolve('s7plus/worker')), {
   workerData: { config, autoStart: true },
 });
@@ -304,10 +341,7 @@ Options:
   "targets": [
     {
       "id": "plc1",
-      "primary": { "ip": "192.168.1.10", "rack": 0, "slot": 1 },
-      "backups": [
-        { "ip": "192.168.1.11", "rack": 0, "slot": 1 }
-      ],
+      "primary": { "ip": "192.168.1.200", "rack": 0, "slot": 1 },
       "maxConnections": 4
     }
   ],
@@ -426,11 +460,10 @@ For automatic self-signed certificate enrollment in the library, use:
 
 ```js
 const client = new S7CommPlusClient({
-  host: process.env.PLC_HOST,
+  host: '192.168.1.200',
   securityMode: 'tls',
   tls: {
     trustOnFirstUse: true,
-    allowChangedCertificate: true, // Optional; defaults to false.
   },
 });
 ```
@@ -469,7 +502,7 @@ extraction are unchanged. TLS is available for any explicitly configured target.
 For example, with the authorized target supplied through the environment:
 
 ```powershell
-node src/plus-explore.js --live --host $env:PLC_HOST --tls --allow-any-certificate --tls-min-version TLSv1.3
+node src/plus-explore.js --live --host 192.168.1.200 --tls --allow-any-certificate --tls-min-version TLSv1.3
 ```
 
 `tls.minVersion` accepts `TLSv1.2` (default, also permits TLS 1.3) or `TLSv1.3`.
@@ -501,37 +534,35 @@ those specific runs, not the current defaults.
 
 ### Native symbol discovery
 
+This example uses the lab PLC at `192.168.1.200` and its discovered `MyData.D`
+member. Trust-on-first-use does not authenticate the first connection; verify
+the certificate independently before enrolling it.
+
 ```js
-import { readFile } from 'node:fs/promises';
 import { S7CommPlusClient } from 's7plus';
 
-const host = process.env.PLC_HOST;
-if (!host) throw new Error('Configure an authorized PLC target first');
 const plc = new S7CommPlusClient({
-  host,
+  host: '192.168.1.200',
   securityMode: 'tls',
-  limits: { maxObjects: 256 },
-  tls: {
-    ca: await readFile(process.env.S7PLUS_TLS_CA),
-    certificateSha256: process.env.S7PLUS_TLS_CERT_SHA256,
-  },
+  limits: { maxObjects: 256, maxRequests: 100 },
+  tls: { trustOnFirstUse: true },
 });
 try {
   await plc.connect();
-  const block = await plc.getBlockMetadata({ type: 'DB', number: 7 });
+  const block = await plc.getBlockMetadata({ type: 'DB', number: 1 });
   const typeInfo = block.typeInfoId ? await plc.getTypeInfo(block.typeInfoId) : null;
-  const discovery = await plc.listBlockMembers({ type: 'DB', number: 7 });
-  const member = discovery.members.find(item => item.path === 'Enabled' && item.readable);
+  const discovery = await plc.listBlockMembers({ type: 'DB', number: 1 });
+  const member = discovery.members.find(item => item.path === 'D' && item.readable);
   if (!member) throw new Error('Member unavailable in native metadata');
   const result = await plc.readMember(member);
-  // Equivalent after discovery: await plc.readSymbol('SampleDB.Enabled');
+  // Equivalent after discovery: await plc.readSymbol('MyData.D');
   console.log(block, typeInfo?.status, result.observation);
 } finally {
   await plc.disconnect();
 }
 ```
 
-The example names are synthetic. DB discovery retains the runtime object RID;
+DB discovery retains the runtime object RID;
 LID 1 retrieves its native type reference, which can refer to a shared definition
 rather than a DB-specific type. `getTypeInfo()` explores that exact RID, not an
 unbounded catalog. Member/name lists retain native IDs, software datatypes, type
@@ -619,6 +650,10 @@ same type after a download. Refresh explicitly after program changes. No fallbac
 discovery or writes are performed.
 
 ### Batch Value Reads
+
+The following fragments use a connected `plc` targeting `192.168.1.200`, as in
+the [native discovery example](#native-symbol-discovery). Keep that session open
+for the fragment and disconnect it afterward.
 
 `readMembers(members)` reads 1..4096 descriptors discovered or explicitly archive/cache-bound by the same connected
 client and returns lightweight `{ observation }` entries in input order. Combine
@@ -724,19 +759,15 @@ DBs, FB sections or multi-instance layouts.
 
 On an explicitly connected `S7CommPlusClient`, select inputs (`I`), outputs (`Q`)
 or marker memory (`M`). These are native symbolic tags, not an absolute-byte scan
-and not a list manufactured from offline project declarations.
+and not a list manufactured from offline project declarations. The `plc` below
+is the connected `192.168.1.200` client from the discovery example.
 
 ```js
-const discovery = await client.listAreaMembers({ type: 'I' }, {
-  maxTypes: 8,
-  maxMembers: 4096,
-});
-
-console.log(discovery.area, discovery.completeness, discovery.diagnostics);
-const member = discovery.members.find(candidate => candidate.readable);
-if (member) {
-  const sample = await client.readMember(member);
-  console.log(sample.observation);
+for (const type of ['I', 'Q', 'M']) {
+  const discovery = await plc.listAreaMembers({ type }, { maxTypes: 8, maxMembers: 4096 });
+  console.log(discovery.area, discovery.completeness, discovery.diagnostics);
+  const member = discovery.members.find(candidate => candidate.readable);
+  if (member) console.log((await plc.readMember(member)).observation);
 }
 ```
 
@@ -781,7 +812,8 @@ or preventing its PLC-side cause.
 
 ### Communication Resources
 
-On a connected native `S7CommPlusClient` in RUN or STOP:
+On a connected native `S7CommPlusClient` in RUN or STOP, such as a `client`
+connected to `192.168.1.200` (see [lab-s7commplus-diagnostics.js](examples/lab-s7commplus-diagnostics.js)):
 
 ```js
 const snapshot = await client.readCommunicationResources();
@@ -812,7 +844,8 @@ automatically, and reading a write limit does not enable writes.
 
 ### Current Alarm Diagnostics
 
-On a connected native TLS V2 client in RUN or STOP:
+On a connected native TLS V2 client in RUN or STOP, such as a `client` connected
+to `192.168.1.200` (see [lab-s7commplus-alarms.js](examples/lab-s7commplus-alarms.js)):
 
 ```js
 const snapshot = await client.readActiveAlarms({ languageId: 1033, maxAlarms: 128 });
@@ -865,6 +898,8 @@ returns `NOT_REPORTED_IN_INVENTORY` without a guessed-object query. Exceeding
 `maxEvents` (1..128) or receiving a mismatched tree stops the session rather than
 silently dropping records. Calls are not cached and never follow relation targets.
 
+For the connected `192.168.1.200` client from the discovery example:
+
 ```js
 const snapshot = await plc.readProgramEventMetadata({ maxEvents: 128 });
 for (const event of snapshot.events) console.log(event.name, event.relations);
@@ -894,7 +929,8 @@ the observed zero-valued native block-protection mode. Production extraction,
 unknown protection states and nonzero protection modes are denied. No credential
 guessing or plaintext fallback is attempted.
 
-In a fresh, connected client session with sufficient request/byte budgets:
+In a fresh client session connected to `192.168.1.200` using independently
+verified TLS and sufficient request/byte budgets (TOFU alone does not qualify):
 
 ```js
 const acquisition = await plc.uploadProgram({
@@ -963,10 +999,9 @@ starting the equipment, use a connected TLS V2 client with effective full access
 and at least five remaining requests:
 
 ```js
-const { host, port } = plc.report.target;
 const result = await plc.cpuStart({
   confirmRun: true,
-  confirmTarget: `${host}:${port}`,
+  confirmTarget: '192.168.1.200:102',
 });
 console.log(result); // { before: 'STOP', after: 'RUN', commandSent: true, verified: true }
 ```
@@ -1032,9 +1067,9 @@ latency and pacing budgets remain in force.
 
 ```js
 const client = new S7CommPlusClient({
-  host: process.env.PLC_HOST,
+  host: '192.168.1.200',
   securityMode: 'tls',
-  tls: approvedTlsConfiguration,
+  tls: { trustOnFirstUse: true },
   limits: { maxConnectionsPerTarget: 4, maxQueuedRequests: 32 },
 });
 ```
@@ -1077,15 +1112,35 @@ distinct readable session-bound symbolic members. RUN and a PLC-provided owned
 subscription container are required. The session supports one subscription for
 its lifetime; deletion removes the owned container, not an individual child.
 
+This example subscribes to the lab PLC's discovered `Clock_Byte` marker:
+
 ```js
-const handle = await plc.createSubscription(members, { cycleMs: 250, credits: 10, queueSize: 16 });
+import { setTimeout as delay } from 'node:timers/promises';
+import { S7CommPlusClient } from 's7plus';
+
+const plc = new S7CommPlusClient({
+  host: '192.168.1.200', securityMode: 'tls',
+  tls: { trustOnFirstUse: true }, limits: { maxRequests: 100 },
+});
+let handle;
 try {
-  const delta = plc.popSubscription(handle); // null when no update is queued
-  console.log(delta, plc.subscriptionDiagnostics(handle));
-  const renewal = await plc.renewSubscription(handle, 10);
-  console.log(renewal); // SENT, not acknowledged by the PLC
+  await plc.connect();
+  const markers = await plc.listAreaMembers({ type: 'M' });
+  const clock = markers.members.find(member => member.path === 'Clock_Byte' && member.readable);
+  if (!clock) throw new Error('Clock_Byte unavailable');
+  handle = await plc.createSubscription([clock], { cycleMs: 250, credits: 5 });
+  let received = 0;
+  const deadline = Date.now() + 8000;
+  while (received < 8 && Date.now() < deadline) {
+    const delta = plc.popSubscription(handle);
+    if (!delta) { await delay(50); continue; }
+    console.log(delta.items.map(item => item.observation));
+    if (++received === 3) console.log(await plc.renewSubscription(handle, 5));
+  }
+  console.log(plc.subscriptionDiagnostics(handle));
 } finally {
-  await plc.deleteSubscription(handle);
+  try { if (handle) await plc.deleteSubscription(handle); }
+  finally { await plc.disconnect(); }
 }
 ```
 
@@ -1119,6 +1174,14 @@ BYTE/USINT values must be integers from 0 to 255. Inputs, outputs, cached/archiv
 descriptors and classic offsets are rejected. The configured production IP is
 denied based on the connected address, including hostname and mapped-IP aliases.
 
+For the isolated lab at `192.168.1.200`, [lab-s7commplus-write.js](examples/lab-s7commplus-write.js)
+toggles the discovered scratch BOOL `MyData.x0`, reads it back and restores it.
+It requires authorization for that specific scratch member and includes the
+library's explicit target confirmation. If restoration cannot be verified, independently
+inspect and restore the printed original value.
+
+For a previously discovered member on any separately authorized target:
+
 ```js
 const result = await plc.writeMember(member, desiredValue, {
   confirmWrite: true,
@@ -1147,7 +1210,7 @@ Each explicit stage gets fresh sessions; discovery is excluded from sampling
 rates. A failure stops sibling traffic and prevents later stages. There are no
 automatic retries, reconnects, writes, CPU mode changes or transport fallbacks.
 
-The [example plan](examples/s7commplus-benchmark.json) selects DB1 and DB2. It
+The [example plan](config/s7commplus-benchmark.json) selects DB1 and DB2. It
 progressively reduces native read pacing from 50 to 20 to 10 ms, while a second
 connection samples numeric members every 500 ms. Its final stage adds a second
 boolean reader of the **same members** to measure replicated traffic load, not
@@ -1159,8 +1222,8 @@ From this repository, with the authorized CA path and independently approved
 certificate SHA256 in `S7PLUS_TLS_CA` and `S7PLUS_TLS_CERT_SHA256`:
 
 ```bash
-node src/plus-benchmark.js --live --acknowledge-load --host "$PLC_HOST" \
-  --tls --config examples/s7commplus-benchmark.json --output trace.ndjson
+node src/plus-benchmark.js --live --acknowledge-load --host 192.168.1.200 \
+  --tls --config config/s7commplus-benchmark.json --output trace.ndjson
 ```
 
 Use only an explicitly authorized test PLC. Both `--live` and
@@ -1307,6 +1370,20 @@ Subscriptions schedule polling; they do not create native PLC push subscriptions
 | GET | `/api/scan-groups` | Scan group statistics |
 | GET | `/metrics` | Prometheus metrics |
 
+With the classic configuration above pointing `plc1` to `192.168.1.200` and the
+web service running locally, this subscribes to marker byte 0. Classic PLC
+access must be enabled and the chosen offset must be appropriate for the PLC:
+
+```sh
+curl -X POST http://127.0.0.1:8080/api/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"targetId":"plc1","tags":[{"name":"marker0","area":131,"start":0,"amount":1,"wordLen":2}],"intervalMs":1000}'
+# After the first scan, read the cached value; delete the returned subscription when done.
+curl 'http://127.0.0.1:8080/api/read?tag=marker0'
+```
+
+`127.0.0.1:8080` is the proxy's web service; `192.168.1.200` is its PLC target.
+
 ### Structured DB Access
 
 | Method | Path | Description |
@@ -1327,6 +1404,15 @@ messages are JSON; the transcripts below show client (`->`) and server (`<-`)
 directions and abbreviated payloads. Subscriptions are polling-based.
 
 ### Subscribe to raw tags
+
+For the same classic target `plc1` at `192.168.1.200`, connect to the proxy's
+`ws://127.0.0.1:8080/ws` and send:
+
+```json
+{"type":"subscribe","targetId":"plc1","tags":[{"name":"marker0","area":131,"start":0,"amount":1,"wordLen":2}],"intervalMs":1000}
+```
+
+The PLC must permit classic access; this is not a native Plus subscription.
 
 ```text
 -> { "type": "subscribe", "targetId": "plc1", "tags": [...], "intervalMs": 500 }
