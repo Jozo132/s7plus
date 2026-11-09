@@ -465,6 +465,7 @@ export class PlusAssembler {
     if (this.#pending.length + this.#bytes + bytes.length > this.maxBytes) throw new PlusError('RESPONSE_LIMIT', 'Response allocation budget exceeded');
     this.#pending = Buffer.concat([this.#pending, bytes]);
     const messages = [];
+    let confirmations = 0;
     while (this.#pending.length >= 4) {
       if (this.#pending[0] !== 0x72) throw new PlusError('MALFORMED_RESPONSE', 'Expected S7CommPlus 0x72');
       const version = this.#pending[1];
@@ -472,12 +473,11 @@ export class PlusAssembler {
         if (!this.#sessionKey || this.#pending.readUInt16BE(2) !== 16) throw new PlusError('SYSTEM_EVENT', 'PLC SystemEvent: stop acquisition and inspect raw response');
         if (this.#pending.length < 20) break;
         const event = this.#pending.subarray(4, 20);
-        if ((!event.equals(Buffer.from('000000000000031c0000000000000000', 'hex'))
-          && !event.equals(Buffer.from('00000000000003230000000000000000', 'hex'))
-          && !event.equals(Buffer.from('00000000000003220000000000000000', 'hex'))
-          && !event.equals(Buffer.from('00000000000004430000000000000000', 'hex'))) || ++this.#confirmations > 16) {
+        if (event.readUInt32BE(0) !== 0 || event.readUInt32BE(4) === 0 || event.readUInt32BE(8) !== 0
+          || event.readUInt32BE(12) !== 0 || ++confirmations > 16) {
           throw new PlusError('SYSTEM_EVENT', 'Unknown or excessive PLC SystemEvent; acquisition stopped');
         }
+        this.#confirmations++;
         this.#pending = this.#pending.subarray(20);
         continue;
       }

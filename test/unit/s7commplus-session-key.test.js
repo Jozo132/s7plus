@@ -166,7 +166,7 @@ describe('S7-1200 legacy SessionKey known answers', () => {
     const negative = Buffer.from(body); negative[10] = 127;
     expect(() => responsePayload(negative, 0x04F2, 3, false, false, true)).toThrow(/ReturnValue/);
   });
-  it.each([0x31c, 0x322, 0x323, 0x443])('recognizes only bounded exact empty session confirmations after key establishment (%i)', code => {
+  it.each([0x31c, 0x322, 0x323, 0x443])('recognizes bounded structured session confirmations after key establishment (%i)', code => {
     const confirmation = Buffer.from('72fe001000000000000003230000000000000000', 'hex');
     confirmation.writeUInt32BE(code, 8);
     const assembler = new PlusAssembler(); assembler.setSessionKey(Buffer.alloc(24, 35));
@@ -178,6 +178,12 @@ describe('S7-1200 legacy SessionKey known answers', () => {
     expect(() => assembler.feed(unknown)).toThrow(/SystemEvent/);
     const limited = new PlusAssembler(); limited.setSessionKey(Buffer.alloc(24, 35));
     for (let count = 0; count < 16; count++) limited.feed(confirmation);
-    expect(() => limited.feed(confirmation)).toThrow(/excessive/);
+    expect(limited.sessionConfirmations).toBe(16);
+    limited.feed(confirmation);
+    expect(limited.sessionConfirmations).toBe(17);
+    const excessive = new PlusAssembler(); excessive.setSessionKey(Buffer.alloc(24, 35));
+    const burst = Buffer.concat(Array.from({ length: 17 }, () => confirmation));
+    expect(() => excessive.feed(burst)).toThrow(/excessive/);
+    expect(excessive.sessionConfirmations).toBe(16);
   });
 });
