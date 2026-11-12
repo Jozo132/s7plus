@@ -56,13 +56,25 @@ do not establish live subscription support in this project.
 
 The same pinned MIT reference's `v1_session_key` modules and `_fragment_hmac.py`
 informed the JavaScript legacy SessionKey and authenticated-fragment compatibility
-implementation. The complete S7-1200 blob/key known-answer vector and independent
+implementation. The complete S7-1200 and S7-1500 blob/key known-answer vectors and independent
 OpenSSL fragment vectors are retained in the unit tests. Challenge-fingerprint
-tables and S7-1200 public-key bytes originate in MIT-licensed HarpoS7
+tables and S7-1200/S7-1500 public-key bytes originate in MIT-licensed HarpoS7
 (https://github.com/bonk-dev/HarpoS7), as documented by that pinned reference.
 The applicable HarpoS7 notice is: Copyright (c) 2024 bonk. Its MIT permission,
 conditions and warranty disclaimer are the same as the MIT terms reproduced
 below; the notice and those terms apply to these derived portions.
+
+The S7-1500 family-00 key catalogue and family-specific metadata were
+cross-checked with HarpoS7 revision
+`b0f8968d551b5e07448dc7c77680fea59276c272`, including its
+`HarpoS7.PublicKeys/Keys/00` binaries and `SetMultiVarsRequest` templates.
+Operation-specific informational CreateObject status and legacy response
+IntegrityId placement were informed by the pinned Python connection code.
+The Wireshark dissector at revision
+`073cbc71a6c8da990bbbd14a8d61cde859cc8207` independently corroborates the
+service-result names; only protocol facts, not dissector source, were used.
+These additions have synthetic and known-answer coverage, not production
+S7-1500 hardware qualification.
 
 Legacy SHA-256 state continuation uses `@noble/hashes` version 1.8.0, Copyright
 (c) 2022 Paul Miller (https://paulmillr.com), MIT licensed. Its notice and full

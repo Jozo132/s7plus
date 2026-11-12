@@ -8,7 +8,7 @@ import { FrameAssembler } from '../src/protocol/frame-assembler.js';
 import { Cursor, decodeObjects, decodeValue, u32, vlq } from '../src/protocol/s7commplus/codec.js';
 import { metadataExplore } from './s7commplus-metadata-fixture.js';
 
-/** @typedef {{state?:number,challenge?:boolean,stall?:boolean,wrongSequence?:boolean,oversized?:boolean,smallTpdu?:boolean,itemError?:boolean,badTail?:boolean,protectionMarker?:boolean,reject?:'initSSL'|'createSession'|'setupSession',badInitTail?:boolean,createVersion?:number,initVersion?:number,malformed?:'reserved'|'opcode'|'function'|'truncated'|'trailer'|'cotp'|'length'|'genericError'|'duplicate'|'empty',versionSchema?:'missing'|'duplicate'|'invalid'|'foreignOwner',terminate?:boolean,setupError?:boolean,badSetupTail?:boolean,tls?:{key:Buffer,cert:Buffer},abortTLS?:boolean,stallTLS?:boolean,badIntegrity?:boolean,reference?:boolean,compositeReject?:boolean,nonzeroCreateStatus?:boolean,metadata?:boolean,areaReference?:'invalid'|'zero'|'missing',areaTypeMissing?:boolean,memberError?:boolean,memberTypeMismatch?:boolean,readRejectLid?:number,classicOffsetValues?:Record<string,Buffer>,classicOffsetPValues?:Record<string,Buffer>,programContent?:boolean,programFailure?:boolean,programStall?:boolean,programEmpty?:boolean}} FixtureOptions */
+/** @typedef {{state?:number,challenge?:boolean,stall?:boolean,wrongSequence?:boolean,oversized?:boolean,smallTpdu?:boolean,itemError?:boolean,protectionLevel?:number,badTail?:boolean,protectionMarker?:boolean,reject?:'initSSL'|'createSession'|'setupSession',badInitTail?:boolean,createVersion?:number,initVersion?:number,malformed?:'reserved'|'opcode'|'function'|'truncated'|'trailer'|'cotp'|'length'|'genericError'|'duplicate'|'empty',versionSchema?:'missing'|'duplicate'|'invalid'|'foreignOwner',terminate?:boolean,setupError?:boolean,badSetupTail?:boolean,tls?:{key:Buffer,cert:Buffer},abortTLS?:boolean,stallTLS?:boolean,badIntegrity?:boolean,reference?:boolean,compositeReject?:boolean,nonzeroCreateStatus?:boolean,metadata?:boolean,areaReference?:'invalid'|'zero'|'missing',areaTypeMissing?:boolean,memberError?:boolean,memberTypeMismatch?:boolean,readRejectLid?:number,classicOffsetValues?:Record<string,Buffer>,classicOffsetPValues?:Record<string,Buffer>,programContent?:boolean,programFailure?:boolean,programStall?:boolean,programEmpty?:boolean,legacyLeadingAttributeCounter?:boolean}} FixtureOptions */
 
 /** @param {bigint} value */
 export function encodeTestUInt64(value) {
@@ -83,7 +83,7 @@ export function validateSessionRequest(request, index, secure = false, reference
   return functionCode;
 }
 
-/** @param {FixtureOptions & {subscriptionContainerRid?:number,subscription?:'before'|'after'|'none',scalarWrite?:'success'|'rejected'|'lost',programEvents?:'present'|'missing'|'mismatch'|'unresolved',currentAlarms?:'present'|'empty'|'partial'|'invalidText'|'unknownClass'|'multiple',communicationResources?:'complete'|'partial'|'invalid'|'duplicate'|'outOfRange'|'badTail',cpuStart?:'success'|'rejected'|'unchanged'|'badIntegrity'|'badTail'|'lost',programProtected?:boolean,states?:number[],inventorySize?:number,tlsDelayMs?:number,legacyInit?:'rejected'|'error2',legacyKey?:{challenge:Buffer,blob:Buffer,sessionKey:Buffer},legacyBadHmac?:boolean,legacyBadCounter?:boolean,legacyDowngrade?:boolean,legacyInventoryDelayMs?:number,readStall?:boolean,resetOnDisconnect?:boolean,resetOnRead?:boolean,readRejectLid?:number}} [options] */
+/** @param {FixtureOptions & {subscriptionContainerRid?:number,subscription?:'before'|'after'|'none',scalarWrite?:'success'|'rejected'|'lost',programEvents?:'present'|'missing'|'mismatch'|'unresolved',currentAlarms?:'present'|'empty'|'partial'|'invalidText'|'unknownClass'|'multiple',communicationResources?:'complete'|'partial'|'invalid'|'duplicate'|'outOfRange'|'badTail',cpuStart?:'success'|'rejected'|'unchanged'|'badIntegrity'|'badTail'|'lost',programProtected?:boolean,states?:number[],inventorySize?:number,tlsDelayMs?:number,legacyInit?:'rejected'|'error2',legacyKey?:{challenge:Buffer,blob:Buffer,sessionKey:Buffer,family?:0|1,fingerprint?:string},legacyBadHmac?:boolean,legacyBadCounter?:boolean,legacyBadAttributeCounter?:boolean,legacyDowngrade?:boolean,legacyInventoryDelayMs?:number,readStall?:boolean,resetOnDisconnect?:boolean,resetOnRead?:boolean,readRejectLid?:number}} [options] */
 export async function fixture(options = {}) {
   /** @type {import('node:net').Socket[]} */
   const sockets = [];
@@ -156,7 +156,12 @@ export async function fixture(options = {}) {
           const activation = new Cursor(request.subarray(22, -4));
           assert.deepEqual([activation.uint(), activation.uint()], [1, 323]);
           assert.deepEqual([...activation.take(3)], [0, 2, 5]);
-        } else assert.ok([0x04BB, 0x054C, 0x0586].includes(functionCode), 'No process writes or control');
+        } else {
+          assert.ok([0x04BB, 0x054C, 0x0586].includes(functionCode), 'No process writes or control');
+          const fill = functionCode === 0x04BB ? 5 : 4;
+          const expected = Buffer.concat([vlq(sequence - (options.legacyKey.family === 0 ? 4 : 3)), Buffer.alloc(fill)]);
+          assert.deepEqual(request.subarray(-4 - expected.length, -4), expected, 'Family-specific read counter and fill');
+        }
       } else if (options.subscription && requestCount >= 3 && request.readUInt16BE(7) === 0x04F2) {
         functionCode = 0x04F2;
         assert.ok(secureSocket);
@@ -213,19 +218,19 @@ export async function fixture(options = {}) {
         if (options.versionSchema === 'duplicate') attributes.push({ id: 306, raw: version });
         if (options.challenge) attributes.push({ id: 303, raw: Buffer.from([0x10, 2, 1, 42]) });
         if (options.legacyKey) {
-          const fingerprint = Buffer.from('01:BD426B091F08731A');
+          const fingerprint = Buffer.from(options.legacyKey.fingerprint ?? '01:BD426B091F08731A');
           attributes.push({ id: 233, raw: Buffer.concat([Buffer.from([0, 21, fingerprint.length]), fingerprint]) },
             { id: 299, raw: Buffer.concat([Buffer.from([0, 4]), vlq(0x20000001)]) },
             { id: 303, raw: Buffer.concat([Buffer.from([0x10, 2, 20]), options.legacyKey.challenge]) });
         }
         const container = options.subscriptionContainerRid;
         payload = Buffer.concat([Buffer.from([0, container === undefined ? 1 : 2]), vlq(77), ...(container === undefined ? [] : [vlq(container)]), object(options.versionSchema === 'foreignOwner' ? 88 : 288, attributes, 287)]);
-        if (options.nonzeroCreateStatus) payload[0] = 18;
+        if (options.nonzeroCreateStatus) payload = Buffer.concat([encodeTestUInt64(0x4000800000000011n), payload.subarray(1)]);
       } else if (functionCode === 0x04BB) {
         const objectId = request.readUInt32BE(18);
         payload = Buffer.concat([Buffer.from([0]), object(objectId, objectId === 52 ? [{ id: 0x8BD,
           raw: Buffer.concat([Buffer.from([0, 23]), u32(0xD99), vlq(0xD9E), Buffer.from([0, 8, options.states?.[stateReads++] ?? (cpuStarted ? 8 : options.state ?? 8), 0])]) }] : [])]);
-      } else if (functionCode === 0x0586) payload = Buffer.from(options.programContent || options.scalarWrite ? [0, 0, 4, 1] : options.protectionMarker ? [0, 0, 0, 4, 2, 0] : [0, 0, 4, 2]);
+      } else if (functionCode === 0x0586) payload = Buffer.from(options.protectionLevel !== undefined ? [0, 0, 4, options.protectionLevel] : options.programContent || options.scalarWrite ? [0, 0, 4, 1] : options.protectionMarker ? [0, 0, 0, 4, 2, 0] : [0, 0, 4, 2]);
       else if (functionCode === 0x054C) {
         if (options.classicOffsetValues) {
           const cursor = new Cursor(request.subarray(18, -4));
@@ -347,9 +352,10 @@ export async function fixture(options = {}) {
       if (options.legacyKey && functionCode === 0x04F2) payload = Buffer.from([options.legacyBadCounter ? 99 : 0, 6, 0, 0, 0, 0]);
       if (options.cpuStart && functionCode === 0x04F2) payload = Buffer.from([options.cpuStart === 'rejected' ? 1 : 0]);
       if ((secureSocket && sequence > 2) || (options.legacyKey && sequence > 3)) {
-        const counter = options.subscription || options.cpuStart || options.scalarWrite ? [0x04F2, 0x04CA, 0x04D4, 0x0542].includes(functionCode) ? writeIntegrity++ : readIntegrity++ : sequence - 3;
-        const integrity = vlq(options.badIntegrity || (functionCode === 0x04F2 && options.cpuStart === 'badIntegrity') ? 99 : sequence + counter);
+        const counter = options.subscription || options.cpuStart || options.scalarWrite ? [0x04F2, 0x04CA, 0x04D4, 0x0542].includes(functionCode) ? writeIntegrity++ : readIntegrity++ : sequence - (options.legacyKey?.family === 0 ? 4 : 3);
+        const integrity = vlq(options.badIntegrity || (functionCode === 0x04F2 && options.cpuStart === 'badIntegrity') || (functionCode === 0x0586 && options.legacyBadAttributeCounter) ? 99 : sequence + counter);
         if (functionCode === 0x04BB) payload = Buffer.concat([payload.subarray(0, 1), u32(request.readUInt32BE(18)), integrity, payload.subarray(1), Buffer.alloc(4)]);
+        else if (options.legacyKey?.family === 0 && functionCode === 0x0586 && options.legacyLeadingAttributeCounter) payload = Buffer.concat([integrity, payload, Buffer.alloc(4)]);
         else payload = Buffer.concat([payload, integrity]);
         if (functionCode === 0x04F2 && options.cpuStart === 'badTail') payload = Buffer.concat([payload, Buffer.from([99])]);
       }
@@ -373,10 +379,21 @@ export async function fixture(options = {}) {
         plus = options.subscription === 'before' ? Buffer.concat([notification, plus]) : Buffer.concat([plus, notification]);
       }
       if (options.programContent && functionCode === 0x04BB && ![3, 52].includes(request.readUInt32BE(18))) {
-        const split = Math.floor(body.length / 2);
-        plus = Buffer.concat([Buffer.from([0x72, version, split >> 8, split & 255]), body.subarray(0, split),
-          Buffer.from([0x72, version, (body.length - split) >> 8, (body.length - split) & 255]), body.subarray(split),
-          Buffer.from([0x72, version, 0, 0])]);
+        const content = options.legacyKey ? body.subarray(33) : body;
+        const split = Math.floor(content.length / 2);
+        /** @type {Buffer|null} */
+        let previousDigest = null;
+        const fragments = [content.subarray(0, split), content.subarray(split)].map(fragment => {
+          if (options.legacyKey) {
+            const hmac = createHmac('sha256', options.legacyKey.sessionKey);
+            if (previousDigest) hmac.update(previousDigest);
+            previousDigest = hmac.update(fragment).digest();
+            if (options.legacyBadHmac) previousDigest[0] ^= 1;
+            fragment = Buffer.concat([Buffer.from([32]), previousDigest, fragment]);
+          }
+          return Buffer.concat([Buffer.from([0x72, version, fragment.length >> 8, fragment.length & 255]), fragment]);
+        });
+        plus = Buffer.concat([...fragments, Buffer.from([0x72, version, 0, 0])]);
       }
       if (options.malformed === 'empty') plus = Buffer.from('72010000', 'hex');
       if (options.malformed === 'length') plus.writeUInt16BE(body.length + 1, 2);

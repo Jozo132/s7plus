@@ -3,6 +3,19 @@ import { createCipheriv, createHash, createHmac, randomBytes } from 'node:crypto
 import { PlusError, u32, vlq } from './codec.js';
 
 const PUBLIC_KEYS = new Map([
+  ['00:0448ACCBD5A0BFD2', '9808369442d4f3b63f9aa40856ddf798579966bc2a9c382c3fbf13a4d00aaa98ffefc9ab38da5537'],
+  ['00:181B7B0847D11694', '8456a26996122216c921c571ff11e0befafdb1d70b5d4bc8390f5b0cc273ec142a03f2a04e6f1593'],
+  ['00:1B580465BB0551B2', 'd1c451071e18c526a423a9cd21349f01b6ccd9f2dda9e4dc2ff11356c9116b6dba611dc02995c097'],
+  ['00:2C1DD211E529278D', '7de32536eac89a3558b82ee98f963bda6e7c179fddb3eeed2e30e446686eced971bb5478d112a3da'],
+  ['00:580B8A122D42D1C0', '6ca1bbad4697ed515424db6b897e9d0c33e2ead0bce5566f257c1bd1dc714bad41f14ed9536cfda2'],
+  ['00:60CDAAA33E0B5D20', 'a21639ced1531ae99d8229a2d5b44c3c5243d73ea4a07099db98ef82c0fd7f5a21ffdce5adc77a3b'],
+  ['00:65227E2580029B7F', 'c249c5135787859bc1e0f475798f134dec36a3df81cdc47d07d1f03060ab0311547f4ba090d7a487'],
+  ['00:6BA412F7F1D965AA', '576516d41c3254e9bb392215cad08f23b3ffb6bc1c588edbb424c44397b068af316f34ad26bf13fc'],
+  ['00:99E4632334CC7993', '3078a83781ca537d29476e26dccd3ab8fb707348c5af98054b4432c89f3601e4be66be574c875967'],
+  ['00:ACD68E9BF9901F8B', '4c7546b7f80fa1938f22db3e90df57a3cad9369afdbd7f51464b95cf62b8e7ce0aeb0cef1681110f'],
+  ['00:C4F47B876DA76D52', '67afc52ad2b7e8d81fd5d56b603ff64cb7973904775f5b0f1a8baa6e3b632274809e51a35e67aba0'],
+  ['00:D3F9CD55A57FE4EB', 'cea2b01f2ec599f21bd602edfd168291df355e1b127c4b1313c2d601ab0c0f4f0e65119996643084'],
+  ['00:E69E7A996524AFAC', 'f0ee32aa65f7169c09df3f75cea9bcdb8e1b0f0c90fac0ab19c3dfc1c08bb85ec60773cdef8f524e'],
   ['01:A95850575DF7B3DE', 'dead01d78404e753f0804d1038ebd16cef9788ccc3c78a972c978ce7efd3baf5002cb03e4fce1128'],
   ['01:AC9BE476CB324E65', '6c71ed8fcc1ae94172040a14b8b1af7501b81e4cb99937491691075109300866557136c8ae848cad'],
   ['01:BD426B091F08731A', 'e0e1f04a5ca3f90148178689bd0c930ab9db867b4f0ab109623959aa32316b7880ed1b4f9a9b189f'],
@@ -149,9 +162,15 @@ export function legacyKeyId(key) { return createHash('sha256').update(key.subarr
 /** @param {Buffer} challenge @param {string} fingerprint @param {(size:number)=>Buffer} [random] */
 export function createLegacySessionKey(challenge, fingerprint, random = randomBytes) {
   const encoded = PUBLIC_KEYS.get(fingerprint);
-  if (!encoded) throw new PlusError('LEGACY_PUBLIC_KEY_UNKNOWN', 'No supported exact advertised S7-1200 public key; key guessing is disabled', { fingerprint });
+  if (!encoded) throw new PlusError('LEGACY_PUBLIC_KEY_UNKNOWN', 'No supported exact advertised S7-1200/1500 public key; key guessing is disabled', { fingerprint });
   if (challenge.length !== 20) throw new PlusError('LEGACY_CHALLENGE', 'Expected exactly one 20-byte legacy challenge');
+  /** @type {0|1} */
+  const family = fingerprint.startsWith('00:') ? 0 : 1;
+  if (!/^[0-9a-f]{80}$/.test(encoded)) throw new PlusError('LEGACY_PUBLIC_KEY_INVALID', 'Bundled public key must contain exactly 40 bytes');
   const publicKey = Buffer.from(encoded, 'hex');
+  if (legacyKeyId(publicKey).reverse().toString('hex').toUpperCase() !== fingerprint.slice(3)) {
+    throw new PlusError('LEGACY_PUBLIC_KEY_INVALID', 'Bundled public-key identity does not match the advertised fingerprint');
+  }
   const key2 = random(24), key1 = random(24), initialCounter = random(16), blinding = random(20);
   const preSeed = fromLE(Buffer.concat([0, 1, 2].map(index => present(key1.subarray(index * 8, index * 8 + 8), 0xA98DE7C5164AD032538Fn))).subarray(0, 20));
   let ephemeral = 0n, shared = 0n;
@@ -170,8 +189,8 @@ export function createLegacySessionKey(challenge, fingerprint, random = randomBy
     .map((value, index) => present(toLE(value, 8), index < 3 ? low : high)));
   const blob = Buffer.alloc(180);
   [0xFEE1DEAD, 180, 1, 1].forEach((value, index) => blob.writeUInt32LE(value, index * 4));
-  legacyKeyId(key2).copy(blob, 16); blob.writeUInt32LE(0x101, 24);
-  legacyKeyId(publicKey).copy(blob, 32); blob.writeUInt32LE(0x110, 40);
+  legacyKeyId(key2).copy(blob, 16); blob.writeUInt32LE(family === 0 ? 0x001 : 0x101, 24);
+  legacyKeyId(publicKey).copy(blob, 32); blob.writeUInt32LE(family === 0 ? 0x010 : 0x110, 40);
   toLE(preSeed ^ mask, 20).copy(blob, 48); toLE(ephemeral, 20).copy(blob, 68); blinding.copy(blob, 88);
   initialCounter.copy(blob, 108);
   let counter = fromLE(initialCounter);
@@ -191,7 +210,7 @@ export function createLegacySessionKey(challenge, fingerprint, random = randomBy
   aes(derived.subarray(16, 32), toLE(checksum, 16)).copy(blob, 164);
   const sessionKey = createHmac('sha256', key2).update(fingerprintChallenge(challenge)).update(challenge.subarray(2, 18)).digest().subarray(0, 24);
   key1.fill(0); key2.fill(0); derived.fill(0);
-  return { blob, sessionKey, publicKey, fingerprint };
+  return { blob, sessionKey, publicKey, fingerprint, family };
 }
 
 /** @param {bigint} value */
@@ -208,11 +227,12 @@ function uint64(value) {
 }
 /** @param {ReturnType<typeof createLegacySessionKey>} material */
 export function encodeLegacySecurityKey(material) {
+  if (material.family !== 0 && material.family !== 1) throw new PlusError('LEGACY_PUBLIC_KEY_UNKNOWN', 'Unsupported legacy key family');
   /** @param {number} id @param {Buffer} key @param {number} flags */
   const descriptor = (id, key, flags) => Buffer.concat([vlq(id), Buffer.from([0, 23]), u32(1825),
     vlq(1826), Buffer.from([0, 5]), uint64(fromLE(legacyKeyId(key))), vlq(1827), Buffer.from([0, 4]), vlq(flags),
     vlq(1828), Buffer.from([0, 4, 0, 0])]);
   return Buffer.concat([Buffer.from([0, 23]), u32(1800), vlq(1801), Buffer.from([0, 4, 0]),
-    vlq(1802), Buffer.from([0, 2, 0]), descriptor(1803, material.publicKey, 0x110),
-    descriptor(1804, material.sessionKey, 0x10101), vlq(1805), Buffer.from([0, 20, 0]), vlq(180), material.blob, Buffer.from([0])]);
+    vlq(1802), Buffer.from([0, 2, 0]), descriptor(1803, material.publicKey, material.family === 0 ? 0x10 : 0x110),
+    descriptor(1804, material.sessionKey, material.family === 0 ? 0x10001 : 0x10101), vlq(1805), Buffer.from([0, 20, 0]), vlq(180), material.blob, Buffer.from([0])]);
 }

@@ -32,13 +32,13 @@ describe('loadConfig', () => {
 
   it('lets explicit overrides win over config file and environment values', () => {
     const configPath = writeConfigFile({
-      listen: { ip: '10.10.10.10', port: 2102 },
-      webApi: { host: '10.10.10.20', port: 8180 },
+      listen: { ip: '192.0.2.10', port: 2102 },
+      webApi: { host: '192.0.2.20', port: 8180 },
     });
 
-    process.env['S7PLUS_IP'] = '10.20.20.20';
+    process.env['S7PLUS_IP'] = '198.51.100.20';
     process.env['S7PLUS_PORT'] = '3102';
-    process.env['S7PLUS_WEB_HOST'] = '10.20.20.30';
+    process.env['S7PLUS_WEB_HOST'] = '198.51.100.30';
     process.env['S7PLUS_WEB_PORT'] = '8280';
 
     const config = loadConfig(configPath, {
@@ -55,7 +55,7 @@ describe('loadConfig', () => {
 
   it('supports S7PLUS_WEB_HOST as an environment override', () => {
     const configPath = writeConfigFile({
-      webApi: { host: '10.10.10.20', port: 8180 },
+      webApi: { host: '192.0.2.20', port: 8180 },
     });
 
     process.env['S7PLUS_WEB_HOST'] = '0.0.0.0';

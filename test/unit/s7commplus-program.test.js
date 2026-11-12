@@ -23,6 +23,23 @@ function inventory() {
 }
 
 describe('native program inventory', () => {
+  it.each([
+    [2578, 0x8A12, 'FB'], [2578, 0x8A20, 'FB'], [2579, 0x8A13, 'FC'], [2579, 0x8A21, 'FC'],
+    [2640, 0x8A32, 'OB'], [2642, 0x8A32, 'OB'], [2647, 0x8A32, 'OB'],
+    [2648, 0x8A32, 'OB'], [2651, 0x8A32, 'OB'], [2656, 0x8A32, 'OB'],
+  ])('validates observed S7-1500 block class %i and prefix %i', (classId, prefix, type) => {
+    const evidence = inventory();
+    const objectRid = prefix * 65536 + 32768;
+    const object = decodeObjects(new Cursor(block(objectRid, classId, 32768, 'Variant')))[0];
+    object.parentRid = 3;
+    evidence.objects[1] = object;
+    expect(decodeProgramInventory(evidence).blocks[0]).toMatchObject({ type, number: 32768, objectRid, status: 'IDENTIFIED' });
+    object.rid = 0x8A0E8000;
+    expect(() => decodeProgramInventory(evidence)).toThrow(/disagree/);
+    object.rid = objectRid;
+    object.attributes[1].value.value = 32767;
+    expect(() => decodeProgramInventory(evidence)).toThrow(/disagree/);
+  });
   it('preserves independently encoded OB, FC and DB identities without calling metadata block content', () => {
     const result = decodeProgramInventory(inventory());
     expect(result.blocks.map(block => [block.type, block.number, block.objectRid])).toEqual([

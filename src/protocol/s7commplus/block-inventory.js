@@ -3,9 +3,15 @@ import { PlusError } from './codec.js';
 
 /** @import { PlusObject } from './codec.js' */
 const blockClasses = new Map([
-  [2574, { type: 'DB', prefix: 0x8A0E }],
-  [2579, { type: 'FC', prefix: 0x8A13 }],
-  [2647, { type: 'OB', prefix: 0x8A32 }],
+  [2574, { type: 'DB', prefixes: [0x8A0E] }],
+  [2578, { type: 'FB', prefixes: [0x8A12, 0x8A20] }],
+  [2579, { type: 'FC', prefixes: [0x8A13, 0x8A21] }],
+  [2640, { type: 'OB', prefixes: [0x8A32] }],
+  [2642, { type: 'OB', prefixes: [0x8A32] }],
+  [2647, { type: 'OB', prefixes: [0x8A32] }],
+  [2648, { type: 'OB', prefixes: [0x8A32] }],
+  [2651, { type: 'OB', prefixes: [0x8A32] }],
+  [2656, { type: 'OB', prefixes: [0x8A32] }],
 ]);
 
 export const PROGRAM_INVENTORY_ATTRIBUTES = Object.freeze([233, 2521, 2523, 2524, 2527, 2532]);
@@ -46,7 +52,7 @@ export function decodeProgramInventory(evidence) {
       throw new PlusError('MALFORMED_METADATA', 'Invalid native program-block number');
     }
     const number = numberValue ? Number(numberValue.value) : null;
-    if (classification && ((object.rid >>> 16) !== classification.prefix
+    if (classification && (!classification.prefixes.includes(object.rid >>> 16)
       || (number !== null && (object.rid & 0xFFFF) !== number))) {
       throw new PlusError('METADATA_MISMATCH', 'Program-block class, RID and number disagree', { objectRid: object.rid, classId: object.classId, number });
     }

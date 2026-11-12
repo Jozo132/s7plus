@@ -805,13 +805,14 @@ describe('S7CommPlus read-only codec', () => {
     try { responsePayload(Buffer.concat([header, encodeTestUInt64(0x8000000000008001n)]), 0x04CA, 1); }
     catch (error) { expect(error).toMatchObject({ code: 'INDETERMINATE_PROTOCOL_ERROR' }); expect(/** @type {any} */ (error).details.returnValue).toBeUndefined(); }
   });
-  it('permits inspection of a nonzero CreateObject status only for verified TLS, never other services', () => {
-    const body = Buffer.from('32000004ca000000013612014d', 'hex');
-    expect(() => responsePayload(body, 0x04CA, 1)).toThrow(/ReturnValue/);
-    const decoded = responsePayload(body, 0x04CA, 1, true);
-    expect(decoded.statusDetails.returnValue).toBe('0x0000000000000012');
-    expect(decoded.cursor.byte()).toBe(1);
-    expect(decoded.cursor.uint()).toBe(77);
+  it('permits pre-legitimated CreateObject inspection on both profiles, never other services', () => {
+    const body = Buffer.from('32000004ca000000013611014d', 'hex');
+    for (const verifiedTls of [false, true]) {
+      const decoded = responsePayload(body, 0x04CA, 1, verifiedTls);
+      expect(decoded.statusDetails.returnValue).toBe('0x0000000000000011');
+      expect(decoded.cursor.byte()).toBe(1);
+      expect(decoded.cursor.uint()).toBe(77);
+    }
     body.writeUInt16BE(0x04BB, 3);
     expect(() => responsePayload(body, 0x04BB, 1, true)).toThrow(/ReturnValue/);
   });
@@ -819,9 +820,13 @@ describe('S7CommPlus read-only codec', () => {
     const header = Buffer.from('32000004ca0000000136', 'hex');
     const accepted = Buffer.concat([header, encodeTestUInt64(0x6000000000000011n), Buffer.from([1, 77])]);
     expect(responsePayload(accepted, 0x04CA, 1, true).statusDetails.serviceResultCode).toBe(17);
-    expect(() => responsePayload(accepted, 0x04CA, 1)).toThrow(/ReturnValue/);
+    expect(responsePayload(accepted, 0x04CA, 1).statusDetails.serviceResultCode).toBe(17);
     const rejected = Buffer.concat([header, encodeTestUInt64(0x6000000000008001n), Buffer.alloc(5)]);
     expect(() => responsePayload(rejected, 0x04CA, 1, true)).toThrow(/ReturnValue/);
+  });
+  it.each([18n, 19n, 22n, 37n, 0x8000000000000011n])('rejects unqualified CreateObject result %s on both profiles', status => {
+    const body = Buffer.concat([Buffer.from('32000004ca0000000136', 'hex'), encodeTestUInt64(status), Buffer.from([1, 77])]);
+    for (const verifiedTls of [false, true]) expect(() => responsePayload(body, 0x04CA, 1, verifiedTls)).toThrow(/ReturnValue/);
   });
   it('classifies a synthetic Multi-ES composite result and never treats a negative status as success', () => {
     const body = Buffer.concat([Buffer.from('32000004ca0000000136', 'hex'), encodeTestUInt64(0x800000000000FF7An), Buffer.from([0])]);
@@ -1611,7 +1616,7 @@ describe('S7CommPlus verified loopback TLS (never live)', () => {
       if (schema === 'valid') {
         await client.connect();
         expect(client.report.sessionEstablished).toBe(true);
-        expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'createSessionStatus', returnValue: '0x0000000000000012' }));
+        expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'createSessionStatus', returnValue: '0x4000800000000011' }));
       } else {
         await expect(client.connect()).rejects.toMatchObject({ code: 'SESSION_CREATE_REJECTED' });
         expect(client.report.sessionEstablished).toBe(false);

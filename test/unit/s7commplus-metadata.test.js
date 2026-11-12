@@ -160,6 +160,19 @@ describe('communication resource snapshots', () => {
 });
 
 describe('native type metadata', () => {
+  it('reads scalar S7-1500 BBOOL without claiming packed-array support', () => {
+    const types = decodeObjects(new Cursor(typeObject(root, [
+      { name: 'Enabled', lid: 10, type: 40 },
+      { name: 'Packed', lid: 20, type: 40, code: 11, dimensions: [{ lowerBound: 0, count: 8 }] },
+    ])));
+    const [scalar, packed] = buildBlockMembers(block, types).members;
+    expect(scalar).toMatchObject({ datatype: 'BBOOL', softdatatype: 40, readable: true, accessPath: [10] });
+    expect(validateMemberValue(scalar, decodeValue(new Cursor(Buffer.from([0, 1, 1]))))).toMatchObject({ datatype: 'BBOOL', value: true });
+    expect(memberValueSize(scalar)).toBe(3);
+    expect(() => validateMemberValue(scalar, decodeValue(new Cursor(Buffer.from([0, 2, 1]))))).toThrow(/does not match/);
+    expect(packed).toMatchObject({ readable: false, status: 'UNSUPPORTED_PACKED_ARRAY' });
+    expect(() => memberValueSize(packed)).toThrow(/qualified scalar/);
+  });
   it('decodes native identities independently of names, software types and offsets', () => {
     const result = objects();
     expect(result[0].typeMembers?.[0]).toMatchObject({ lid: 101, symbolCrc: 0x10203040, softdatatype: 1, offset: { code: 8 } });

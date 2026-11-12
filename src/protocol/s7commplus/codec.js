@@ -537,7 +537,8 @@ export function responsePayload(body, expectedFunction, sequence, verifiedTlsCre
   const legacyInitRejection = legacyInit && expectedFunction === PLUS_FUNCTION.initSSL
     && ((functionCode === PLUS_FUNCTION.initSSL && serviceResultCode === -519) || (functionCode === 0x05A9 && serviceResultCode === -119));
   const activationStatus = authenticatedActivation && expectedFunction === PLUS_FUNCTION.activateSession && status === 6n;
-  if (status !== 0n && !legacyInitRejection && !activationStatus && !(verifiedTlsCreate && expectedFunction === PLUS_FUNCTION.createSession && serviceResultCode !== null && serviceResultCode >= 0)) {
+  const preLegitimatedSession = expectedFunction === PLUS_FUNCTION.createSession && serviceResultCode === 17 && (status >> 63n) === 0n;
+  if (status !== 0n && !legacyInitRejection && !activationStatus && !preLegitimatedSession) {
     const code = expectedFunction === PLUS_FUNCTION.initSSL ? 'INITSSL_REJECTED'
       : expectedFunction === PLUS_FUNCTION.createSession ? 'SESSION_CREATE_REJECTED'
       : expectedFunction === PLUS_FUNCTION.setupSession ? 'SESSION_SETUP_REJECTED' : 'PLC_REJECTED';

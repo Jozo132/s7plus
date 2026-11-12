@@ -127,7 +127,7 @@ describe('Admin routes', () => {
       url: '/admin/api/targets',
       payload: {
         id: 'plc-list',
-        primary: { ip: '10.0.0.5', rack: 0, slot: 1 },
+        primary: { ip: '192.0.2.5', rack: 0, slot: 1 },
         maxConnections: 1,
       },
     });
@@ -147,7 +147,7 @@ describe('Admin routes', () => {
       url: '/admin/api/targets',
       payload: {
         id: 'plc-edit',
-        primary: { ip: '10.0.0.5', rack: 0, slot: 1 },
+        primary: { ip: '192.0.2.5', rack: 0, slot: 1 },
         maxConnections: 1,
       },
     });
@@ -156,7 +156,7 @@ describe('Admin routes', () => {
       method: 'PUT',
       url: '/admin/api/targets/plc-edit',
       payload: {
-        primary: { ip: '10.0.0.6', rack: 0, slot: 2 },
+        primary: { ip: '192.0.2.6', rack: 0, slot: 2 },
         maxConnections: 3,
         requestTimeoutMs: 4000,
       },
@@ -173,7 +173,7 @@ describe('Admin routes', () => {
           source: 'persisted',
           maxConnections: 3,
           requestTimeoutMs: 4000,
-          primary: expect.objectContaining({ ip: '10.0.0.6', slot: 2 }),
+          primary: expect.objectContaining({ ip: '192.0.2.6', slot: 2 }),
         }),
       ]),
     );

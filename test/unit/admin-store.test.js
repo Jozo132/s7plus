@@ -124,15 +124,15 @@ describe('AdminStore', () => {
   it('saves target with backups', () => {
     store.saveTarget({
       id: 'plc2',
-      primary: { ip: '10.0.0.1', rack: 0, slot: 1 },
-      backups: [{ ip: '10.0.0.2', rack: 0, slot: 1 }],
+      primary: { ip: '192.0.2.1', rack: 0, slot: 1 },
+      backups: [{ ip: '192.0.2.2', rack: 0, slot: 1 }],
     });
     const targets = store.loadTargets();
-    expect(targets[0].backups).toEqual([{ ip: '10.0.0.2', rack: 0, slot: 1 }]);
+    expect(targets[0].backups).toEqual([{ ip: '192.0.2.2', rack: 0, slot: 1 }]);
   });
 
   it('deletes a target', () => {
-    store.saveTarget({ id: 'plc1', primary: { ip: '1.1.1.1', rack: 0, slot: 1 } });
+    store.saveTarget({ id: 'plc1', primary: { ip: '203.0.113.1', rack: 0, slot: 1 } });
     expect(store.deleteTarget('plc1')).toBe(true);
     expect(store.loadTargets()).toHaveLength(0);
     expect(store.deleteTarget('plc1')).toBe(false);
@@ -178,7 +178,7 @@ describe('AdminStore', () => {
   });
 
   it('records audit entries on target operations', () => {
-    store.saveTarget({ id: 'plc1', primary: { ip: '1.2.3.4', rack: 0, slot: 1 } });
+    store.saveTarget({ id: 'plc1', primary: { ip: '203.0.113.4', rack: 0, slot: 1 } });
     store.deleteTarget('plc1');
     const log = store.getAuditLog();
     const actions = log.map((e) => e.action);

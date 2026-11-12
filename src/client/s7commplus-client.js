@@ -122,7 +122,7 @@ function readValueBudget(member) {
 /** @typedef {{host?:string,port?:number,productionReadOnly?:boolean,securityMode?:'discovery'|'legacy'|'tls',tls?:{ca?:string|Buffer,servername?:string,certificateSha256?:string,allowAnyCertificate?:boolean,trustOnFirstUse?:boolean,allowChangedCertificate?:boolean,trustStoreDir?:string,minVersion?:'TLSv1.2'|'TLSv1.3'},limits?:PlusLimits}} PlusOptions */
 /** @typedef {{resolve:(value:any)=>void,reject:(error:Error)=>void,timer:ReturnType<typeof setTimeout>}} Pending */
 /** @typedef {{sentAtMonotonicMs:number,receivedAtMonotonicMs:number,latencyMs:number,requestBytes:number,responseBytes:number}} RequestTiming */
-/** @typedef {ReturnType<typeof responsePayload> & {version:number,expectedIntegrityId:number|undefined,timing:RequestTiming,correlation:{sequence:number,functionCode:number,integrityId:number|null,request:PlusOperation,responseBody:Buffer,fragmentCount:number}}} ExchangeResult */
+/** @typedef {ReturnType<typeof responsePayload> & {version:number,expectedIntegrityId:number|undefined,leadingIntegrityVerified:boolean,timing:RequestTiming,correlation:{sequence:number,functionCode:number,integrityId:number|null,request:PlusOperation,responseBody:Buffer,fragmentCount:number}}} ExchangeResult */
 /** @typedef {{operation:PlusOperation,resolve:(value:ExchangeResult)=>void,reject:(error:Error)=>void}} QueuedRequest */
 
 export class S7CommPlusClient {
@@ -159,6 +159,8 @@ export class S7CommPlusClient {
   #writeIntegrityId = 0;
   /** @type {Buffer|undefined} */
   #sessionKey;
+  /** @type {0|1|undefined} */
+  #legacyFamily;
   /** @type {Buffer|undefined} */
   #securityKey;
   #legacyAuthenticated = false;
@@ -390,6 +392,7 @@ export class S7CommPlusClient {
         }
         legacyMaterial = createLegacySessionKey(Buffer.from(challenges[0].value.value), fingerprints[0].value.value);
         this.#securityKey = encodeLegacySecurityKey(legacyMaterial);
+        this.#legacyFamily = legacyMaterial.family;
       } else if (securedRole || (!this.#tlsEstablished && challenges.length)) {
         throw new PlusError(this.#tlsEstablished ? 'AUTHENTICATION_REQUIRED' : 'LEGACY_SESSION_KEY_REQUIRED', 'PLC advertises a challenge or secured role; the selected profile requires unsupported authentication; no key probing or bypass attempted');
       }
@@ -407,10 +410,12 @@ export class S7CommPlusClient {
         this.#phase = 'activateSession';
         const activated = await this.#exchange({ kind: 'activateSession' });
         if (activated.cursor.take(activated.cursor.bytes.length - activated.cursor.offset).some(byte => byte !== 0)) throw new PlusError('MALFORMED_RESPONSE', 'Unqualified session activation response');
-        this.#integrityId++;
-        this.#writeIntegrityId++;
+        if (legacyMaterial.family === 1) {
+          this.#integrityId++;
+          this.#writeIntegrityId++;
+        }
         this.#legacyAuthenticated = true;
-        this.#record(this.#observations, { kind: 'legacySessionKey', fingerprint: legacyMaterial.fingerprint, authenticatedPackets: true, encryptedTransport: false });
+        this.#record(this.#observations, { kind: 'legacySessionKey', fingerprint: legacyMaterial.fingerprint, family: legacyMaterial.family, authenticatedPackets: true, encryptedTransport: false });
       }
       this.#established = true;
       this.#ready = true;
@@ -538,7 +543,7 @@ export class S7CommPlusClient {
     if (cursor.bytes[cursor.offset] === 0 && cursor.bytes[cursor.offset + 1] === 0 && cursor.bytes[cursor.offset + 2] === 4) cursor.byte();
     const value = decodeValue(response.cursor);
     if (value.flags || value.datatype !== 4) throw new PlusError('UNSUPPORTED_DECODING', 'Expected scalar UDInt protection level');
-    this.#checkScalarTail(cursor, response.expectedIntegrityId);
+    this.#checkScalarTail(cursor, response.expectedIntegrityId, response.leadingIntegrityVerified);
     this.#protection = value.value;
     if (this.#protection === null || this.#protection > 2) throw new PlusError('ACCESS_RESTRICTED', `Protection level ${this.#protection}; stop before program exploration`);
   }
@@ -631,15 +636,20 @@ export class S7CommPlusClient {
     } catch (error) { this.#stop(this.#asError(error)); throw error; }
   }
 
-  /** @param {{type:string,number:number}} selector @param {{mode?:'run'|'stop'}} [options] */
+  /** @param {{type:string,number:number}} selector @param {{mode?:'run'|'stop',confirmLegacyRead?:boolean,confirmTarget?:string}} [options] */
   async uploadProgramBlock(selector, options = {}) {
     if (!selector || !['DB', 'FC', 'OB'].includes(selector.type) || !Number.isInteger(selector.number) || selector.number < 1 || selector.number > 65535) {
       throw new PlusError('ARGUMENT', 'Select an inventoried DB, FC or OB number in 1..65535');
     }
-    if (!options || Object.keys(options).some(key => key !== 'mode') || (options.mode !== undefined && !['run', 'stop'].includes(options.mode))) {
+    if (!options || Object.keys(options).some(key => !['mode', 'confirmLegacyRead', 'confirmTarget'].includes(key)) || (options.mode !== undefined && !['run', 'stop'].includes(options.mode))) {
       throw new PlusError('ARGUMENT', 'Select run or stop acquisition mode; no mode-control flags are accepted');
     }
-    this.#requireProgramUpload();
+    const legacyReadConfirmed = options.confirmLegacyRead === true && options.confirmTarget === `${this.#host}:${this.#port}`;
+    if ((options.confirmLegacyRead !== undefined || options.confirmTarget !== undefined) && !legacyReadConfirmed) {
+      throw new PlusError('PROGRAM_READ_CONFIRMATION_REQUIRED', 'Legacy block-content reads require confirmLegacyRead: true and confirmTarget matching host:port');
+    }
+    if (legacyReadConfirmed && options.mode !== undefined && options.mode !== 'run') throw new PlusError('CPU_STATE', 'Legacy block-content reads require RUN; no mode change is permitted');
+    this.#requireProgramUpload(legacyReadConfirmed);
     const requested = { type: selector.type, number: selector.number };
     if (this.#uploadBusy) throw new PlusError('CONCURRENCY_LIMIT', 'Only one software acquisition may run per session');
     this.#uploadBusy = true;
@@ -649,7 +659,7 @@ export class S7CommPlusClient {
       const inventory = await this.listProgramBlocks();
       const matches = inventory.blocks.filter(block => block.type === requested.type && block.number === requested.number);
       if (matches.length !== 1 || matches[0].status !== 'IDENTIFIED') throw new PlusError('BLOCK_UNAVAILABLE', 'Block was not uniquely identified by native inventory');
-      const content = await this.#readProgramBlock(matches[0]);
+      const content = await this.#readProgramBlock(matches[0], legacyReadConfirmed);
       const after = await this.readCpuState();
       if (after !== before) throw new PlusError('CPU_STATE', 'CPU operating mode changed during block acquisition');
       return { ...content, controller: structuredClone(this.#identity), cpuState: { before, after }, inventory };
@@ -742,17 +752,20 @@ export class S7CommPlusClient {
     if (this.#cpuState !== mode.toUpperCase()) throw new PlusError('CPU_STATE', `Acquisition requires CPU ${mode.toUpperCase()}; no mode change was requested`);
   }
 
-  #requireProgramUpload() {
+  /** @param {boolean} [allowLegacyRead] */
+  #requireProgramUpload(allowLegacyRead = false) {
     this.#requireReady();
     this.#requireMetadataState();
     if (this.#host === getProductionHost()) throw new PlusError('TARGET_DENIED', 'Program extraction is not qualified for the production target');
-    if (!this.#tlsVerified || this.#version !== 2) throw new PlusError('SECURITY_REQUIRED', 'Program extraction requires the verified TLS V2 profile; no plaintext fallback');
-    if (this.#protection !== 1) throw new PlusError('ACCESS_RIGHTS_UNQUALIFIED', 'Program extraction requires the qualified effective access level');
+    const legacyRead = allowLegacyRead && this.#options.securityMode === 'legacy' && this.#legacyFamily === 0 && !!this.#sessionKey && this.#established && this.#version === 1;
+    if ((!this.#tlsVerified || this.#version !== 2) && !legacyRead) throw new PlusError('SECURITY_REQUIRED', 'Program extraction requires verified TLS V2 or an explicitly confirmed authenticated family-00 block read; no automatic fallback');
+    if (this.#protection !== 1 && !(legacyRead && this.#protection === 0)) throw new PlusError('ACCESS_RIGHTS_UNQUALIFIED', 'Program extraction requires the qualified effective full-access level');
+    if (legacyRead && this.#cpuState !== 'RUN') throw new PlusError('CPU_STATE', 'Legacy block-content reads require RUN; no mode change is permitted');
   }
 
-  /** @param {import('../protocol/s7commplus/block-upload.js').ProgramBlock} block */
-  async #readProgramBlock(block) {
-    this.#requireProgramUpload();
+  /** @param {import('../protocol/s7commplus/block-upload.js').ProgramBlock} block @param {boolean} [allowLegacyRead] */
+  async #readProgramBlock(block, allowLegacyRead = false) {
+    this.#requireProgramUpload(allowLegacyRead);
     const protection = block.nativeAttributes.find(attribute => attribute.id === 2524)?.value;
     const modes = protection?.flags === 0 && protection.structId === 3447 && Array.isArray(protection.value)
       ? protection.value.filter((/** @type {{id:number,value:PlusValue}} */ member) => member.id === 3448) : [];
@@ -1431,11 +1444,11 @@ export class S7CommPlusClient {
     if (observed !== expected) throw new PlusError('INDETERMINATE_PROTOCOL_ERROR', 'Response integrity counter does not match the outstanding request', { expectedIntegrityId: expected, observedIntegrityId: observed });
   }
 
-  /** @param {Cursor} cursor @param {number} [expectedIntegrityId] */
-  #checkScalarTail(cursor, expectedIntegrityId) {
+  /** @param {Cursor} cursor @param {number} [expectedIntegrityId] @param {boolean} [leadingIntegrityVerified] */
+  #checkScalarTail(cursor, expectedIntegrityId, leadingIntegrityVerified = false) {
     this.#checkIntegrity(cursor, expectedIntegrityId);
     if (cursor.offset === cursor.bytes.length) return;
-    if (expectedIntegrityId !== undefined && cursor.bytes.length - cursor.offset === 4 && cursor.take(4).every(byte => byte === 0)) return;
+    if ((expectedIntegrityId !== undefined || leadingIntegrityVerified) && cursor.bytes.length - cursor.offset === 4 && cursor.take(4).every(byte => byte === 0)) return;
     if (this.#version !== 1 || cursor.bytes.length - cursor.offset !== 1 || cursor.byte() !== 0) {
       throw new PlusError('UNSUPPORTED_DECODING', 'Unqualified response suffix or integrity profile');
     }
@@ -1563,19 +1576,26 @@ export class S7CommPlusClient {
       const expectedIntegrityId = context.integrityId === undefined ? undefined
         : this.#sessionKey && operation.kind === 'activateSession' ? context.integrityId : (sequence + context.integrityId) >>> 0;
       let responseBody = incoming.body;
-      if (this.#sessionKey && operation.kind === 'activateSession') {
+      const leadingIntegrityVerified = !!this.#sessionKey && (operation.kind === 'activateSession'
+        || (this.#legacyFamily === 0 && operation.kind === 'readAttribute' && responseBody[10] !== 0))
+        && responseBody.length >= 10 && responseBody.readUInt16BE(3) === PLUS_FUNCTION[/** @type {keyof typeof PLUS_FUNCTION} */ (operation.kind)];
+      let integrityBytes = 0;
+      if (leadingIntegrityVerified) {
         const prefix = new Cursor(responseBody.subarray(10));
         this.#checkIntegrity(prefix, expectedIntegrityId);
+        integrityBytes = prefix.offset;
         responseBody = Buffer.concat([responseBody.subarray(0, 10), prefix.bytes.subarray(prefix.offset)]);
       }
       const decoded = responsePayload(responseBody, PLUS_FUNCTION[/** @type {keyof typeof PLUS_FUNCTION} */ (operation.kind)], sequence,
         this.#tlsEstablished && operation.kind === 'createSession', this.#options.securityMode === 'legacy' && operation.kind === 'initSSL',
         !!this.#sessionKey && operation.kind === 'activateSession');
+      decoded.statusDetails.returnValueBodyOffset += integrityBytes;
+      decoded.statusDetails.bodyBytes += integrityBytes;
       if (decoded.statusDetails.returnValue !== '0x0000000000000000') {
         this.#record(this.#observations, { kind: operation.kind === 'initSSL' ? 'legacyInitSSLStatus' : `${operation.kind}Status`, ...decoded.statusDetails,
           interpretation: operation.kind === 'initSSL' ? 'Explicit legacy profile continues after a recognized InitSSL rejection; no TLS downgrade performed' : 'Session objects and setup must validate before establishment' });
       }
-      return { ...decoded, timing, version: incoming.version, expectedIntegrityId: this.#sessionKey && operation.kind === 'activateSession' ? undefined : expectedIntegrityId,
+      return { ...decoded, timing, version: incoming.version, leadingIntegrityVerified, expectedIntegrityId: leadingIntegrityVerified ? undefined : expectedIntegrityId,
         correlation: { sequence, functionCode: PLUS_FUNCTION[/** @type {keyof typeof PLUS_FUNCTION} */ (operation.kind)],
           integrityId: expectedIntegrityId ?? null, request: structuredClone(operation), responseBody: Buffer.from(incoming.body),
           fragmentCount: incoming.fragmentCount } };

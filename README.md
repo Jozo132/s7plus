@@ -1,5 +1,9 @@
 # S7Plus
 
+The home-owned lab PLC at `192.168.1.200` is intentionally shown.
+Other device addresses in these examples are anonymized TEST-NET placeholders,
+not reachable PLC targets. Replace them only with explicitly authorized endpoints.
+
 Node.js proxy and client library for Siemens S7 PLCs, with managed protocol clients
 and an explicit transparent forwarding mode:
 
@@ -36,7 +40,7 @@ loopback tests are not hardware, load-safety or scan-synchronous qualification.
 - **REST + WebSocket API** — lightweight built-in HTTP endpoints and real-time WebSocket push with slow-consumer protection
 - **TCP proxy** - managed classic S7Comm routing, or explicit transparent S7Comm/Plus forwarding with optional end-to-end TLS and connection-level TSAP/IP routing/filtering
 - **snap7 compatibility** — `S7Client` read/write subset and `S7Server`; unimplemented metadata, upload and control methods return explicit errors
-- **Native S7CommPlus** - explicit TLS or legacy S7-1200 sessions, session-owned symbolic descriptors, scalar/batch/name reads, resource/alarm/event metadata and restricted in-memory program content; no restorable controller backup
+- **Native S7CommPlus** - explicit TLS or legacy S7-1200/S7-1500 sessions, session-owned symbolic descriptors, scalar/batch/name reads, resource/alarm/event metadata and restricted in-memory program content; no restorable controller backup. Bounded family-00 reads, program inventory and selected OB/DB content were observed on one S7-1500 V2.8; see [S7-1500 implementation evidence](docs/S7_1500_RESEARCH.md#bounded-hardware-readout).
 - **Worker thread mode** — run the proxy in an isolated worker
 - **Prometheus metrics** — built-in `/metrics` endpoint
 
@@ -408,7 +412,7 @@ without providing native decoding, acquisition or a public subscription API.
 | CPU/communication snapshots | `readCpuState()`, `readCommunicationResources()`; [resources](#communication-resources) | Fresh bounded reads; resource counts do not establish safe connection capacity. |
 | Alarm snapshot | `readActiveAlarms()`; [alarms](#current-alarm-diagnostics) | Current/update-relevant service, not diagnostic history or acknowledgement. |
 | Program metadata | `listProgramBlocks()`, `readProgramEventMetadata()`, `explore()`; [events](#native-software-event-metadata) | Native identities, attributes and relations; not executable equivalence or execution history. |
-| Program content | `uploadProgramBlock()`, `uploadProgram()`; [content](#native-program-content-as-in-memory-files) | Restricted verified-TLS profile; in-memory components, not a restorable backup. `uploadBlock()` remains unsupported. |
+| Program content | `uploadProgramBlock()`, `uploadProgram()`; [content](#native-program-content-as-in-memory-files) | Verified TLS, or explicitly confirmed per-block authenticated family-00 reads; bulk extraction remains TLS-only. In-memory components, not a restorable backup. `uploadBlock()` remains unsupported. |
 | CPU control | `cpuStart()`; [explicit RUN](#explicit-cpu-start) | Confirmed RUN only. STOP, reset, generic writes, force and downloads remain denied. |
 | Concurrency | [Independent HMI sessions](#concurrent-hmi-sessions) | One in-flight request per client, bounded FIFO; separate clients for parallel traffic. |
 | Push acquisition | `createSubscription()`, `popSubscription()`, `renewSubscription()`, `subscriptionDiagnostics()`, `deleteSubscription()`; [native subscriptions](#native-subscriptions) | One owned container per TLS V2 session; bounded queues and finite credits. |
@@ -481,8 +485,9 @@ Enrollment cannot be combined with CA/pin verification or `allowAnyCertificate`.
 Reports say `TLS_TOFU`, not `TLS_VERIFIED`, and record enrollment, matches, or
 replacement as `ENROLLED`, `MATCHED`, or `REPLACED`. Initial enrollment does not
 independently authenticate the PLC; allowing changes also removes protection
-against impersonation via a different certificate. Program extraction still
-requires verified TLS.
+against impersonation via a different certificate. TLS program extraction still
+requires verified TLS; TOFU does not qualify it. The separate confirmed legacy
+block-read profile below does not inherit or bypass TLS trust.
 
 To explicitly accept any PLC certificate, set `tls.allowAnyCertificate: true`
 in the library, or add `--allow-any-certificate` to the TLS exploration command:
@@ -915,7 +920,7 @@ unqualified; this is not a typed CPU cycle/load API.
 
 ### Native program content as in-memory files
 
-`listProgramBlocks()` inventories observed DB, FC and OB objects, preserving
+`listProgramBlocks()` inventories observed DB, FB, FC and OB objects, preserving
 their native classes, RIDs, numbers, names, language codes and returned attributes.
 Unknown classes and missing metadata are explicit; the inventory is not claimed
 to be exhaustive. `uploadProgramBlock({ type, number })` freshly inventories the
@@ -924,10 +929,34 @@ native code/body/interface/comment/reference attributes using read-only Explore.
 It does **not** transmit the reference implementation's experimental
 `GET_VAR_SUBSTREAMED` upload request.
 
-The qualified profile requires verified TLS V2, effective access level 1, and
-the observed zero-valued native block-protection mode. Production extraction,
-unknown protection states and nonzero protection modes are denied. No credential
-guessing or plaintext fallback is attempted.
+The default content profile requires verified TLS V2, effective access level 1,
+and the observed zero-valued native block-protection mode. A separate per-block
+family-00 profile requires an authenticated legacy session, effective full-access
+level 0 or 1, RUN, `confirmLegacyRead: true`, and `confirmTarget` matching the
+exact host and port. Unknown protection states, nonzero protection modes and
+the configured production-target deny rule remain enforced. No credential
+guessing, automatic fallback, writes or mode changes are attempted.
+
+For an explicitly authorized legacy S7-1500 endpoint (the address is illustrative):
+
+```js
+const legacy = new S7CommPlusClient({
+  host: '192.0.2.10', port: 1102, securityMode: 'legacy', productionReadOnly: true,
+  limits: { maxRequests: 16, pacingMs: 1000, readPacingMs: 1000 },
+});
+try {
+  await legacy.connect();
+  const content = await legacy.uploadProgramBlock({ type: 'OB', number: 1 }, {
+    mode: 'run', confirmLegacyRead: true, confirmTarget: '192.0.2.10:1102',
+  });
+  console.log(content.status, content.files.length, content.cpuState);
+} finally {
+  await legacy.disconnect();
+}
+```
+
+This confirmation applies only to that call. `uploadProgram()` remains TLS-only;
+FB content, packed BOOL arrays and full controller backups remain unqualified.
 
 In a fresh client session connected to `192.168.1.200` using independently
 verified TLS and sufficient request/byte budgets (TOFU alone does not qualify):
@@ -958,7 +987,7 @@ checked; fragment counts refer to Plus frames, not TCP/TLS records.
 Software acquisition is sequential, bounded and non-retrying. It reserves a
 request for the final CPU-state check; exhausted budgets, unavailable content,
 protected blocks and failures remain explicit. Increase the default 12-request
-budget deliberately for larger inventories. FB/UDT/tag enumeration and other
+budget deliberately for larger inventories. FB content, UDT/tag enumeration and other
 CPU/security profiles remain unqualified, not silently reported as complete.
 
 Each file contains `name`, `bytes`, `byteCount`, `sha256`, native block identity,

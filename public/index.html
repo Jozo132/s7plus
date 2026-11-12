@@ -306,7 +306,7 @@ tr:hover>td { background:var(--accent-soft); }
     <h2 id="target-modal-title">Add Target</h2>
     <div class="form-row">
       <div class="field"><label>Target ID</label><input id="tf-id" placeholder="plc1"></div>
-      <div class="field"><label>Primary IP</label><input id="tf-ip" placeholder="192.168.1.10"></div>
+      <div class="field"><label>Primary IP</label><input id="tf-ip" placeholder="192.0.2.10"></div>
     </div>
     <div class="form-row">
       <div class="field"><label>Rack</label><input id="tf-rack" type="number" value="0"></div>
@@ -322,7 +322,7 @@ tr:hover>td { background:var(--accent-soft); }
       <div class="field"><label>Reconnect Backoff (comma-separated ms)</label><input id="tf-backoff" placeholder="1000,2000,4000,8000"></div>
     </div>
     <div class="form-row">
-      <div class="field"><label>Backups (JSON array)</label><textarea id="tf-backups" class="mono" placeholder='[{"ip":"192.168.1.11","rack":0,"slot":1}]'></textarea></div>
+      <div class="field"><label>Backups (JSON array)</label><textarea id="tf-backups" class="mono" placeholder='[{"ip":"192.0.2.11","rack":0,"slot":1}]'></textarea></div>
     </div>
     <div class="actions">
       <button class="btn" onclick="closeTargetModal()">Cancel</button>

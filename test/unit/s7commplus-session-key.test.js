@@ -28,17 +28,18 @@ const fragmentVectors = [
   return { data, protected: Buffer.concat([Buffer.from([32]), Buffer.from(String(digest), 'hex'), data]) };
 });
 
-describe('S7-1200 legacy SessionKey known answers', () => {
-  it('completes owned-session setup, activation, health, discovery and cached process batches', async () => {
+describe('S7-1200/1500 legacy SessionKey known answers', () => {
+  it.each([['01:BD426B091F08731A', false], ['00:181B7B0847D11694', false], ['00:181B7B0847D11694', true]])('completes owned-session setup, activation, health, discovery and cached process batches (%s, leading attribute counter %s)', async (fingerprint, legacyLeadingAttributeCounter) => {
     const challenge = Buffer.alloc(20, 90);
-    const material = createLegacySessionKey(challenge, '01:BD426B091F08731A');
-    const server = await fixture({ legacyInit: 'error2', legacyKey: { challenge, ...material }, metadata: true, legacyInventoryDelayMs: 1100 });
+    const material = createLegacySessionKey(challenge, fingerprint);
+    const server = await fixture({ legacyInit: 'error2', legacyKey: { challenge, ...material }, nonzeroCreateStatus: true, metadata: true, legacyInventoryDelayMs: 1100, legacyLeadingAttributeCounter });
     const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy', limits: { maxRequests: 24, readPacingMs: 10 } });
     try {
       await client.connect();
       expect(client.report.securityMode).toBe('LEGACY_SESSION_KEY_INTEGRITY');
       expect(client.report.cpuState).toBe('RUN');
       expect(client.report.effectiveProtectionLevel).toBe(2);
+      expect(client.report.observations).toContainEqual(expect.objectContaining({ kind: 'legacySessionKey', family: material.family, fingerprint }));
       const discovered = await client.listBlockMembers({ type: 'DB', number: 7 }, { maxTypes: 1 });
       const member = discovered.members.find(candidate => candidate.readable);
       expect(member).toBeDefined();
@@ -57,18 +58,106 @@ describe('S7-1200 legacy SessionKey known answers', () => {
     } finally { await client.disconnect(); await server.close(); }
   }, 10000);
 
-  it.each([
-    ['legacyBadHmac', 'INTEGRITY_CHECK_FAILED'], ['legacyBadCounter', 'INDETERMINATE_PROTOCOL_ERROR'],
-    ['legacyDowngrade', 'PROTOCOL_VERSION_UNSUPPORTED'],
-  ])('stops authenticated session establishment on %s', async (option, code) => {
+  it.each([false, true])('rejects a wrong family-00 attribute IntegrityId without establishing a usable session (leading %s)', async legacyLeadingAttributeCounter => {
     const challenge = Buffer.alloc(20, 90);
-    const material = createLegacySessionKey(challenge, '01:BD426B091F08731A');
+    const material = createLegacySessionKey(challenge, '00:181B7B0847D11694');
+    const server = await fixture({ legacyKey: { challenge, ...material }, legacyBadAttributeCounter: true, legacyLeadingAttributeCounter });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
+    try {
+      await expect(client.connect()).rejects.toMatchObject({ code: 'INDETERMINATE_PROTOCOL_ERROR', details: { observedIntegrityId: 99 } });
+      expect(client.connected).toBe(false);
+      expect(client.productionReadOnly).toBe(true);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+
+  it.each([
+    ['DB', 7, 'DEFINITION_ONLY', 0], ['FC', 8, 'CODE_CONTENT_RETRIEVED', 0], ['OB', 9, 'CODE_CONTENT_RETRIEVED', 0],
+    ['DB', 7, 'DEFINITION_ONLY', 1], ['FC', 8, 'CODE_CONTENT_RETRIEVED', 1], ['OB', 9, 'CODE_CONTENT_RETRIEVED', 1],
+  ])('reads explicitly confirmed legacy block-content for %s%i at access %s without permitting bulk extraction', async (type, number, status, protectionLevel) => {
+    const challenge = Buffer.alloc(20, 90);
+    const material = createLegacySessionKey(challenge, '00:181B7B0847D11694');
+    const server = await fixture({ legacyKey: { challenge, ...material }, programContent: true, protectionLevel });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy', limits: { maxRequests: 16 } });
+    try {
+      await client.connect();
+      const before = server.requests.length;
+      await expect(client.uploadProgramBlock({ type, number })).rejects.toMatchObject({ code: 'SECURITY_REQUIRED' });
+      await expect(client.uploadProgramBlock({ type, number }, { confirmLegacyRead: true, confirmTarget: 'different:102' })).rejects.toMatchObject({ code: 'PROGRAM_READ_CONFIRMATION_REQUIRED' });
+      await expect(client.uploadProgramBlock({ type, number }, { mode: 'stop', confirmLegacyRead: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'CPU_STATE' });
+      expect(server.requests).toHaveLength(before);
+      const content = await client.uploadProgramBlock({ type, number }, { confirmLegacyRead: true, confirmTarget: `127.0.0.1:${server.port}` });
+      expect(content).toMatchObject({ status, byteCount: 4, restorable: false, cpuState: { before: 'RUN', after: 'RUN' } });
+      expect(content.rawBytes).toEqual(Buffer.from([0x10, number, 0, 0xFF]));
+      await expect(client.uploadProgram({ include: [type] })).rejects.toMatchObject({ code: 'SECURITY_REQUIRED' });
+      expect(client.productionReadOnly).toBe(true);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+
+  it.each([
+    ['00:181B7B0847D11694', 2, 8, 'ACCESS_RIGHTS_UNQUALIFIED'],
+    ['01:BD426B091F08731A', 1, 8, 'SECURITY_REQUIRED'],
+    ['00:181B7B0847D11694', 0, 4, 'CPU_STATE'],
+  ])('refuses legacy block-content with family %s, access %s and CPU state %s', async (fingerprint, protectionLevel, state, code) => {
+    const challenge = Buffer.alloc(20, 90);
+    const material = createLegacySessionKey(challenge, fingerprint);
+    const server = await fixture({ legacyKey: { challenge, ...material }, programContent: true, protectionLevel, state });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
+    try {
+      await client.connect();
+      const before = server.requests.length;
+      await expect(client.uploadProgramBlock({ type: 'FC', number: 8 }, { confirmLegacyRead: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code });
+      expect(server.requests).toHaveLength(before);
+      expect(client.productionReadOnly).toBe(true);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+
+  it('refuses protected legacy block-content before transmitting a content read', async () => {
+    const challenge = Buffer.alloc(20, 90);
+    const material = createLegacySessionKey(challenge, '00:181B7B0847D11694');
+    const server = await fixture({ legacyKey: { challenge, ...material }, programContent: true, programProtected: true });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
+    try {
+      await client.connect();
+      const before = server.requests.length;
+      await expect(client.uploadProgramBlock({ type: 'FC', number: 8 }, { confirmLegacyRead: true, confirmTarget: `127.0.0.1:${server.port}` })).rejects.toMatchObject({ code: 'PROTECTED_BLOCK' });
+      expect(server.requests).toHaveLength(before + 2);
+      expect(client.productionReadOnly).toBe(true);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+
+  it.each([
+    ['01:BD426B091F08731A', 'legacyBadHmac', 'INTEGRITY_CHECK_FAILED'],
+    ['01:BD426B091F08731A', 'legacyBadCounter', 'INDETERMINATE_PROTOCOL_ERROR'],
+    ['01:BD426B091F08731A', 'legacyDowngrade', 'PROTOCOL_VERSION_UNSUPPORTED'],
+    ['00:181B7B0847D11694', 'legacyBadHmac', 'INTEGRITY_CHECK_FAILED'],
+    ['00:181B7B0847D11694', 'legacyBadCounter', 'INDETERMINATE_PROTOCOL_ERROR'],
+    ['00:181B7B0847D11694', 'legacyDowngrade', 'PROTOCOL_VERSION_UNSUPPORTED'],
+  ])('stops authenticated session establishment for %s on %s', async (fingerprint, option, code) => {
+    const challenge = Buffer.alloc(20, 90);
+    const material = createLegacySessionKey(challenge, fingerprint);
     const server = await fixture({ legacyInit: 'rejected', legacyKey: { challenge, ...material }, [option]: true });
     const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
     try {
       await expect(client.connect()).rejects.toMatchObject({ code });
       expect(client.report.sessionEstablished).toBe(false);
       expect(server.requests).toHaveLength(4);
+      expect(server.errors).toEqual([]);
+    } finally { await client.disconnect(); await server.close(); }
+  });
+  it.each(['missing', 'duplicate', 'foreignOwner', 'invalid'])('rejects family-00 session schema %s despite pre-legitimated status', async schema => {
+    const challenge = Buffer.alloc(20, 90);
+    const material = createLegacySessionKey(challenge, '00:181B7B0847D11694');
+    const server = await fixture({ legacyKey: { challenge, ...material }, nonzeroCreateStatus: true,
+      versionSchema: /** @type {'missing'|'duplicate'|'foreignOwner'|'invalid'} */ (schema) });
+    const client = new S7CommPlusClient({ host: '127.0.0.1', port: server.port, securityMode: 'legacy' });
+    try {
+      await expect(client.connect()).rejects.toMatchObject({ code: schema === 'invalid' ? 'SESSION_SETUP_REJECTED' : 'SESSION_CREATE_REJECTED' });
+      expect(client.connected).toBe(false);
+      expect(server.requests).toHaveLength(2);
       expect(server.errors).toEqual([]);
     } finally { await client.disconnect(); await server.close(); }
   });
@@ -122,11 +211,56 @@ describe('S7-1200 legacy SessionKey known answers', () => {
     expect(cursor.offset).toBe(cursor.bytes.length);
   });
 
+  it('matches the complete HarpoS7 S7-1500 encrypted blob, session key and descriptor flags', () => {
+    const fills = [0x35, 0x35, 0x25, 0x2D, 0x2D];
+    const material = createLegacySessionKey(Buffer.alloc(20, 0xDD), '00:181B7B0847D11694', size => Buffer.alloc(size, fills.shift()));
+    const expected = 'addee1feb40000000100000001000000' +
+      '4e0c313b5e08e43b0100000000000000' +
+      '9416d147087b1b181000000000000000' +
+      '793c08f6e8ed43d9aace705e868d23df' +
+      '19b9075197561ecb1aa3ef707a7acf18' +
+      'a7d529fe219d55e72d2d2d2d2d2d2d2d' +
+      '2d2d2d2d2d2d2d2d2d2d2d2d25252525' +
+      '25252525252525252525252505c6087c' +
+      'f782dba39e21bafa8f31b324bf580016' +
+      '4bbc3dde0d15d69db76546f4491ca34f' +
+      'ef12f959ec900f005f36dd389040761e' +
+      'f2b856d6';
+    expect(material.family).toBe(0);
+    expect(material.blob.toString('hex')).toBe(expected);
+    expect(material.sessionKey.toString('hex')).toBe('65c4f179980a43cb60e1194ba500f5b9d04f374b56374866');
+    expect(legacyKeyId(material.publicKey).toString('hex')).toBe('9416d147087b1b18');
+    const cursor = new Cursor(encodeLegacySecurityKey(material));
+    const value = decodeValue(cursor);
+    for (const [id, flags] of [[1803, 0x10], [1804, 0x10001]]) {
+      const descriptor = value.value.find(/** @param {{id:number}} member */ member => member.id === id);
+      expect(descriptor.value.value.find(/** @param {{id:number}} member */ member => member.id === 1827).value.value).toBe(flags);
+    }
+    expect(cursor.offset).toBe(cursor.bytes.length);
+  });
+
   it('rejects unknown, family-only and malformed key identities without guessing', () => {
-    for (const fingerprint of ['01', '00:BD426B091F08731A', '01:0000000000000000']) {
+    for (const fingerprint of ['00', '01', '00:BD426B091F08731A', '01:181B7B0847D11694', '00:0000000000000000', '01:0000000000000000', '03:5A9B6B015F48D284']) {
       expect(() => createLegacySessionKey(Buffer.alloc(20), fingerprint)).toThrow(/exact advertised/);
     }
     expect(() => createLegacySessionKey(Buffer.alloc(19), '01:BD426B091F08731A')).toThrow(/20-byte/);
+  });
+  it.each(['0448ACCBD5A0BFD2', '181B7B0847D11694', '1B580465BB0551B2', '2C1DD211E529278D',
+    '580B8A122D42D1C0', '60CDAAA33E0B5D20', '65227E2580029B7F', '6BA412F7F1D965AA',
+    '99E4632334CC7993', 'ACD68E9BF9901F8B', 'C4F47B876DA76D52', 'D3F9CD55A57FE4EB', 'E69E7A996524AFAC'])('matches bundled family-00 key fingerprint %s', identity => {
+    const material = createLegacySessionKey(Buffer.alloc(20, 90), `00:${identity}`);
+    expect(legacyKeyId(material.publicKey).reverse().toString('hex').toUpperCase()).toBe(identity);
+    expect(material.family).toBe(0);
+    expect(material.blob.readUInt32LE(24)).toBe(1);
+    expect(material.blob.readUInt32LE(40)).toBe(16);
+  });
+
+  it('matches independent fixed activation and protection request payloads for a family-00 V1 session', () => {
+    const context = { sessionId: 77, version: 1, sessionKey: Buffer.alloc(24, 35), integrityId: 0 };
+    const activation = encodeOperation({ kind: 'activateSession' }, context, 3);
+    expect(activation.subarray(51, -4).toString('hex')).toBe('0000004d018243000205000004e88969001200000000896a001300896b00040000000300000000');
+    const protection = encodeOperation({ kind: 'readAttribute', attribute: 1842 }, { ...context, integrityId: 7 }, 5);
+    expect(protection.subarray(51, -4).toString('hex')).toBe('0000004d2004018e32000004e88969001200000000896a001300896b0004000000010700000000');
   });
 
   it('authenticates canonical session activation and rejects modified or unprotected replies', () => {

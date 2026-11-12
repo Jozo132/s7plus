@@ -11,10 +11,10 @@ export const SOFTWARE_TYPES = Object.freeze({
   62: 'WSTRING', 63: 'VARIANT', 64: 'LTIME', 65: 'LTOD', 66: 'LDT', 67: 'DTL',
 });
 const WIRE_TYPES = new Map([[1, 1], [2, 10], [3, 2], [4, 11], [5, 7], [6, 12], [7, 8],
-  [8, 14], [9, 3], [10, 4], [11, 8], [19, 2], [48, 15], [49, 5], [50, 9], [51, 13], [52, 2], [53, 3],
+  [8, 14], [9, 3], [10, 4], [11, 8], [19, 2], [40, 1], [48, 15], [49, 5], [50, 9], [51, 13], [52, 2], [53, 3],
   [54, 4], [55, 6], [61, 3], [64, 17]]);
 const VALUE_SIZES = new Map([[1, 3], [2, 3], [3, 3], [4, 4], [5, 4], [6, 6], [7, 7],
-  [8, 6], [9, 4], [10, 7], [11, 7], [19, 260], [48, 10], [49, 11], [50, 11], [51, 10], [52, 3], [53, 4],
+  [8, 6], [9, 4], [10, 7], [11, 7], [19, 260], [40, 3], [48, 10], [49, 11], [50, 11], [51, 10], [52, 3], [53, 4],
   [54, 7], [55, 3], [61, 4], [64, 11]]);
 
 /** @typedef {{type:'DB',number:number,name:string|null,objectRid:number,typeInfoId:number|null,status:string,evidence:unknown,memoryLayout?:string,standardSizeBits?:number}} BlockMetadata */
